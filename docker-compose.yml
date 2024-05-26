@@ -28,6 +28,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=postgres
+      - PGPORT=49180
     ports:
       - 49180:49180
     volumes:
