@@ -9,7 +9,7 @@ services:
     ports:
       - 49175:49175
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
+      - DATABASE_URL=postgresql://postgres:postgres@db:49180/postgres
       - NEXTAUTH_SECRET=mysecret
       - SALT=mysalt
       - NEXTAUTH_URL=http://localhost:49175
@@ -29,7 +29,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=postgres
     ports:
-      - 5432:5432
+      - 49180:49180
     volumes:
       - database_data:/var/lib/postgresql/data
 
