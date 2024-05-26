@@ -7,12 +7,12 @@ services:
       db:
         condition: service_healthy
     ports:
-      - 49175:49175
+      - 49175:3000
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:49180/postgres
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/postgres
       - NEXTAUTH_SECRET=mysecret
       - SALT=mysalt
-      - NEXTAUTH_URL=http://localhost:49175
+      - NEXTAUTH_URL=http://localhost:3000
       - TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-true}
       - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
 
@@ -28,9 +28,8 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=postgres
-      - PGPORT=49180
     ports:
-      - 49180:49180
+      - 5432:5432
     volumes:
       - database_data:/var/lib/postgresql/data
 
