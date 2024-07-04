@@ -6,18 +6,22 @@ import { type LangfuseColumnDef } from "@/src/components/table/types";
 import { TokenUsageBadge } from "@/src/components/token-usage-badge";
 import useColumnVisibility from "@/src/features/column-visibility/hooks/useColumnVisibility";
 import { useQueryFilterState } from "@/src/features/filters/hooks/useFilterState";
-import { type FilterState } from "@langfuse/shared";
+import {
+  type FilterState,
+  sessionsTableColsWithOptions,
+  BatchExportTableName,
+} from "@langfuse/shared";
 import { useDetailPageLists } from "@/src/features/navigate-detail-pages/context";
 import { useOrderByState } from "@/src/features/orderBy/hooks/useOrderByState";
-import { sessionsTableColsWithOptions } from "@/src/server/api/definitions/sessionsView";
 import { api } from "@/src/utils/api";
 import { formatIntervalSeconds, utcDateOffsetByDays } from "@/src/utils/dates";
-import { usdFormatter } from "@/src/utils/numbers";
+import { numberFormatter, usdFormatter } from "@/src/utils/numbers";
 import { type RouterOutput } from "@/src/utils/types";
 import type Decimal from "decimal.js";
 import { useEffect } from "react";
 import { NumberParam, useQueryParams, withDefault } from "use-query-params";
-import { useSession } from "next-auth/react";
+import { useLookBackDays } from "@/src/hooks/useLookBackDays";
+import { BatchExportTableButton } from "@/src/components/BatchExportTableButton";
 
 export type SessionTableRow = {
   id: string;
@@ -46,7 +50,6 @@ export default function SessionsTable({
   omittedFilter = [],
 }: SessionTableProps) {
   const { setDetailPageList } = useDetailPageLists();
-  const session = useSession();
 
   const [userFilterState, setUserFilterState] = useQueryFilterState(
     [
@@ -54,9 +57,7 @@ export default function SessionsTable({
         column: "Created At",
         type: "datetime",
         operator: ">",
-        value: utcDateOffsetByDays(
-          session.data?.environment.defaultTableDateTimeOffset ?? -14,
-        ),
+        value: utcDateOffsetByDays(-useLookBackDays(projectId)),
       },
     ],
     "sessions",
@@ -275,7 +276,9 @@ export default function SessionsTable({
       cell: ({ row }) => {
         const value: number | undefined = row.getValue("inputTokens");
 
-        return value ? <span>{Number(value)}</span> : undefined;
+        return value ? (
+          <span>{numberFormatter(Number(value), 0)}</span>
+        ) : undefined;
       },
     },
     {
@@ -288,7 +291,9 @@ export default function SessionsTable({
       cell: ({ row }) => {
         const value = row.getValue("outputTokens");
 
-        return value ? <span>{Number(value)}</span> : undefined;
+        return value ? (
+          <span>{numberFormatter(Number(value), 0)}</span>
+        ) : undefined;
       },
     },
     {
@@ -300,7 +305,9 @@ export default function SessionsTable({
       enableSorting: true,
       cell: ({ row }) => {
         const value = row.getValue("totalTokens");
-        return value ? <span>{Number(value)}</span> : undefined;
+        return value ? (
+          <span>{numberFormatter(Number(value), 0)}</span>
+        ) : undefined;
       },
     },
     {
@@ -343,6 +350,14 @@ export default function SessionsTable({
         columns={columns}
         columnVisibility={columnVisibility}
         setColumnVisibility={setColumnVisibility}
+        actionButtons={[
+          <BatchExportTableButton
+            {...{ projectId, filterState, orderByState }}
+            tableName={BatchExportTableName.Sessions}
+            key="batchExport"
+          />,
+        ]}
+        columnsWithCustomSelect={["userIds"]}
       />
       <DataTable
         columns={columns}

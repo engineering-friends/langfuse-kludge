@@ -1,6 +1,6 @@
 import { JSONView } from "@/src/components/ui/CodeJsonViewer";
 import { z } from "zod";
-import { deepParseJson } from "@/src/utils/json";
+import { deepParseJson } from "@langfuse/shared";
 import { cn } from "@/src/utils/tailwind";
 import { useState } from "react";
 import { Button } from "@/src/components/ui/button";
@@ -207,7 +207,7 @@ export const OpenAiMessageView: React.FC<{
                       message.role === "system" && "bg-primary-foreground",
                       message.role === "assistant" &&
                         "bg-accent-light-green dark:border-accent-dark-green",
-                      message.role === "user" && "bg-foreground",
+                      message.role === "user" && "bg-background",
                       !!message.content && "rounded-t-none border-t-0",
                     )}
                   />

@@ -32,20 +32,10 @@ export const ScoreSource = {
 export type ScoreSource = (typeof ScoreSource)[keyof typeof ScoreSource];
 export const ScoreDataType = {
     CATEGORICAL: "CATEGORICAL",
-    NUMERIC: "NUMERIC"
+    NUMERIC: "NUMERIC",
+    BOOLEAN: "BOOLEAN"
 } as const;
 export type ScoreDataType = (typeof ScoreDataType)[keyof typeof ScoreDataType];
-export const PricingUnit = {
-    PER_1000_TOKENS: "PER_1000_TOKENS",
-    PER_1000_CHARS: "PER_1000_CHARS"
-} as const;
-export type PricingUnit = (typeof PricingUnit)[keyof typeof PricingUnit];
-export const TokenType = {
-    PROMPT: "PROMPT",
-    COMPLETION: "COMPLETION",
-    TOTAL: "TOTAL"
-} as const;
-export type TokenType = (typeof TokenType)[keyof typeof TokenType];
 export const DatasetStatus = {
     ACTIVE: "ACTIVE",
     ARCHIVED: "ARCHIVED"
@@ -108,6 +98,21 @@ export type AuditLog = {
     before: string | null;
     after: string | null;
 };
+export type BatchExport = {
+    id: string;
+    created_at: Generated<Timestamp>;
+    updated_at: Generated<Timestamp>;
+    project_id: string;
+    user_id: string;
+    finished_at: Timestamp | null;
+    expires_at: Timestamp | null;
+    name: string;
+    status: string;
+    query: unknown;
+    format: string;
+    url: string | null;
+    log: string | null;
+};
 export type CronJobs = {
     name: string;
     last_run: Timestamp | null;
@@ -162,6 +167,7 @@ export type EvalTemplate = {
     version: number;
     prompt: string;
     model: string;
+    provider: string;
     model_params: unknown;
     vars: Generated<string[]>;
     output_schema: unknown;
@@ -209,8 +215,12 @@ export type LlmApiKeys = {
     created_at: Generated<Timestamp>;
     updated_at: Generated<Timestamp>;
     provider: string;
+    adapter: string;
     display_secret_key: string;
     secret_key: string;
+    base_url: string | null;
+    custom_models: Generated<string[]>;
+    with_default_models: Generated<boolean>;
     project_id: string;
 };
 export type MembershipInvitation = {
@@ -251,8 +261,10 @@ export type Observation = {
     status_message: string | null;
     version: string | null;
     created_at: Generated<Timestamp>;
+    updated_at: Generated<Timestamp>;
     model: string | null;
     internal_model: string | null;
+    internal_model_id: string | null;
     modelParameters: unknown | null;
     input: unknown | null;
     output: unknown | null;
@@ -263,6 +275,9 @@ export type Observation = {
     input_cost: string | null;
     output_cost: string | null;
     total_cost: string | null;
+    calculated_input_cost: string | null;
+    calculated_output_cost: string | null;
+    calculated_total_cost: string | null;
     completion_start_time: Timestamp | null;
     prompt_id: string | null;
 };
@@ -308,14 +323,6 @@ export type PosthogIntegration = {
     enabled: boolean;
     created_at: Generated<Timestamp>;
 };
-export type Pricing = {
-    id: string;
-    model_name: string;
-    pricing_unit: Generated<PricingUnit>;
-    price: string;
-    currency: Generated<string>;
-    token_type: TokenType;
-};
 export type Project = {
     id: string;
     created_at: Generated<Timestamp>;
@@ -358,6 +365,8 @@ export type Score = {
     observation_id: string | null;
     config_id: string | null;
     string_value: string | null;
+    created_at: Generated<Timestamp>;
+    updated_at: Generated<Timestamp>;
     data_type: Generated<ScoreDataType>;
 };
 export type ScoreConfig = {
@@ -452,6 +461,7 @@ export type DB = {
     Account: Account;
     api_keys: ApiKey;
     audit_logs: AuditLog;
+    batch_exports: BatchExport;
     cron_jobs: CronJobs;
     dataset_items: DatasetItem;
     dataset_run_items: DatasetRunItems;
@@ -467,7 +477,6 @@ export type DB = {
     observations: Observation;
     observations_view: ObservationView;
     posthog_integrations: PosthogIntegration;
-    pricings: Pricing;
     project_memberships: ProjectMembership;
     projects: Project;
     prompts: Prompt;

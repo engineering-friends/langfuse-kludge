@@ -3,16 +3,21 @@ import {
   createEvalJobs,
   evaluate,
   extractVariablesFromTrace,
-} from "../eval-service";
+} from "../features/evaluation/eval-service";
 import { kyselyPrisma, prisma } from "@langfuse/shared/src/db";
 import { randomUUID } from "crypto";
 import Decimal from "decimal.js";
 import { pruneDatabase } from "./utils";
 import { sql } from "kysely";
-import { LangfuseNotFoundError, variableMappingList } from "@langfuse/shared";
+import {
+  LLMAdapter,
+  LangfuseNotFoundError,
+  variableMappingList,
+} from "@langfuse/shared";
 import { encrypt } from "@langfuse/shared/encryption";
 import { OpenAIServer } from "./network";
 import { afterEach } from "node:test";
+import { evalQueue } from "../queues/evalQueue";
 
 vi.mock("../redis/consumer", () => ({
   evalQueue: {
@@ -145,6 +150,19 @@ describe("create eval jobs", () => {
       })
       .execute();
 
+    await kyselyPrisma.$kysely
+      .insertInto("llm_api_keys")
+      .values({
+        id: randomUUID(),
+        project_id: "7a88fb47-b4e2-43b8-a06c-a5ce950dc53a",
+        secret_key: encrypt(String(OPENAI_API_KEY)),
+        provider: "openai",
+        adapter: LLMAdapter.OpenAI,
+        custom_models: [],
+        display_secret_key: "123456",
+      })
+      .execute();
+
     await prisma.jobConfiguration.create({
       data: {
         id: randomUUID(),
@@ -194,6 +212,38 @@ describe("create eval jobs", () => {
       })
       .execute();
 
+    await kyselyPrisma.$kysely
+      .insertInto("llm_api_keys")
+      .values({
+        id: randomUUID(),
+        project_id: "7a88fb47-b4e2-43b8-a06c-a5ce950dc53a",
+        secret_key: encrypt(String(OPENAI_API_KEY)),
+        provider: "openai",
+        adapter: LLMAdapter.OpenAI,
+        custom_models: [],
+        display_secret_key: "123456",
+      })
+      .execute();
+
+    const templateId = randomUUID();
+    await kyselyPrisma.$kysely
+      .insertInto("eval_templates")
+      .values({
+        id: templateId,
+        project_id: "7a88fb47-b4e2-43b8-a06c-a5ce950dc53a",
+        name: "test-template",
+        version: 1,
+        prompt: "Please evaluate toxicity {{input}} {{output}}",
+        model: "gpt-3.5-turbo",
+        provider: "openai",
+        model_params: {},
+        output_schema: {
+          reasoning: "Please explain your reasoning",
+          score: "Please provide a score between 0 and 1",
+        },
+      })
+      .executeTakeFirst();
+
     await prisma.jobConfiguration.create({
       data: {
         id: randomUUID(),
@@ -212,6 +262,7 @@ describe("create eval jobs", () => {
         targetObject: "traces",
         scoreName: "score",
         variableMapping: JSON.parse("[]"),
+        evalTemplateId: templateId,
       },
     });
 
@@ -242,6 +293,9 @@ describe("create eval jobs", () => {
     expect(jobs.length).toBe(1);
     expect(jobs[0].project_id).toBe("7a88fb47-b4e2-43b8-a06c-a5ce950dc53a");
     expect(jobs[0].job_input_trace_id).toBe(traceId);
+    console.log(jobs[0]);
+    const j = await evalQueue?.getJob(jobs[0].id);
+    console.log(j);
     expect(jobs[0].status.toString()).toBe("CANCELLED");
     expect(jobs[0].start_time).not.toBeNull();
     expect(jobs[0].end_time).not.toBeNull();
@@ -275,6 +329,7 @@ describe("execute evals", () => {
         version: 1,
         prompt: "Please evaluate toxicity {{input}} {{output}}",
         model: "gpt-3.5-turbo",
+        provider: "openai",
         model_params: {},
         output_schema: {
           reasoning: "Please explain your reasoning",
@@ -326,6 +381,8 @@ describe("execute evals", () => {
         project_id: "7a88fb47-b4e2-43b8-a06c-a5ce950dc53a",
         secret_key: encrypt(String(OPENAI_API_KEY)),
         provider: "openai",
+        adapter: LLMAdapter.OpenAI,
+        custom_models: [],
         display_secret_key: "123456",
       })
       .execute();
@@ -387,6 +444,7 @@ describe("execute evals", () => {
         version: 1,
         prompt: "Please evaluate toxicity {{input}} {{output}}",
         model: "gpt-3.5-turbo",
+        provider: "openai",
         model_params: {},
         output_schema: {
           reasoning: "Please explain your reasoning",
@@ -480,6 +538,7 @@ describe("execute evals", () => {
         version: 1,
         prompt: "Please evaluate toxicity {{input}} {{output}}",
         model: "gpt-3.5-turbo",
+        provider: "openai",
         model_params: {},
         output_schema: {
           reasoning: "Please explain your reasoning",

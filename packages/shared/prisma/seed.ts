@@ -4,6 +4,7 @@ import {
   type Prisma,
   ObservationType,
   ScoreSource,
+  ScoreDataType,
 } from "../src/index";
 import { hash } from "bcryptjs";
 import { parseArgs } from "node:util";
@@ -11,7 +12,8 @@ import { parseArgs } from "node:util";
 import { chunk } from "lodash";
 import { v4 } from "uuid";
 import { ModelUsageUnit } from "../src";
-import { getDisplaySecretKey, hashSecretKey } from "../src/server/auth";
+import { getDisplaySecretKey, hashSecretKey } from "../src/server";
+import { encrypt } from "../src/encryption";
 
 const LOAD_TRACE_VOLUME = 10_000;
 
@@ -38,6 +40,7 @@ async function main() {
       name: "Demo User",
       email: "demo@langfuse.com",
       password: await hash("password", 12),
+      image: "https://static.langfuse.com/langfuse-dev%2Fexample-avatar.png",
     },
   });
 
@@ -143,6 +146,11 @@ async function main() {
       });
     }
 
+    const configIdsAndNames = await generateConfigsForProject([
+      project1,
+      project2,
+    ]);
+
     const promptIds = await generatePromptsForProject([project1, project2]);
 
     const envTags = [null, "development", "staging", "production"];
@@ -156,7 +164,8 @@ async function main() {
       colorTags,
       project1,
       project2,
-      promptIds
+      promptIds,
+      configIdsAndNames
     );
 
     console.log(
@@ -164,6 +173,25 @@ async function main() {
     );
 
     await uploadObjects(traces, observations, scores, sessions, events);
+
+    // If openai key is in environment, add it to the projects LLM API keys
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+    if (OPENAI_API_KEY) {
+      await prisma.llmApiKeys.create({
+        data: {
+          projectId: project1.id,
+          secretKey: encrypt(OPENAI_API_KEY),
+          displaySecretKey: getDisplaySecretKey(OPENAI_API_KEY),
+          provider: "openai",
+          adapter: "openai",
+        },
+      });
+    } else {
+      console.warn(
+        "No OPENAI_API_KEY found in environment. Skipping seeding LLM API key."
+      );
+    }
 
     // add eval objects
     const evalTemplate = await prisma.evalTemplate.upsert({
@@ -182,6 +210,7 @@ async function main() {
           "Please evaluate the toxicity of the following text {{input}} {{output}}",
         model: "gpt-3.5-turbo",
         vars: ["input", "output"],
+        provider: "openai",
         outputSchema: {
           score: "provide a score between 0 and 1",
           reasoning: "one sentence reasoning for the score",
@@ -348,11 +377,10 @@ async function uploadObjects(
   });
 
   for (let i = 0; i < promises.length; i++) {
-    process.stdout.clearLine(0);
-    process.stdout.cursorTo(0);
-    process.stdout.write(
-      `Seeding of Sessions ${(i / promises.length) * 100}% complete`
-    );
+    if (i + 1 >= promises.length || i % Math.ceil(promises.length / 10) === 0)
+      console.log(
+        `Seeding of Sessions ${((i + 1) / promises.length) * 100}% complete`
+      );
     await promises[i];
   }
 
@@ -366,11 +394,10 @@ async function uploadObjects(
     );
   });
   for (let i = 0; i < promises.length; i++) {
-    process.stdout.clearLine(0);
-    process.stdout.cursorTo(0);
-    process.stdout.write(
-      `Seeding of Traces ${(i / promises.length) * 100}% complete`
-    );
+    if (i + 1 >= promises.length || i % Math.ceil(promises.length / 10) === 0)
+      console.log(
+        `Seeding of Traces ${((i + 1) / promises.length) * 100}% complete`
+      );
     await promises[i];
   }
 
@@ -384,11 +411,10 @@ async function uploadObjects(
   });
 
   for (let i = 0; i < promises.length; i++) {
-    process.stdout.clearLine(0);
-    process.stdout.cursorTo(0);
-    process.stdout.write(
-      `Seeding of Observations ${(i / promises.length) * 100}% complete`
-    );
+    if (i + 1 >= promises.length || i % Math.ceil(promises.length / 10) === 0)
+      console.log(
+        `Seeding of Observations ${((i + 1) / promises.length) * 100}% complete`
+      );
     await promises[i];
   }
 
@@ -402,11 +428,10 @@ async function uploadObjects(
   });
 
   for (let i = 0; i < promises.length; i++) {
-    process.stdout.clearLine(0);
-    process.stdout.cursorTo(0);
-    process.stdout.write(
-      `Seeding of Events ${(i / promises.length) * 100}% complete`
-    );
+    if (i + 1 >= promises.length || i % Math.ceil(promises.length / 10) === 0)
+      console.log(
+        `Seeding of Events ${((i + 1) / promises.length) * 100}% complete`
+      );
     await promises[i];
   }
 
@@ -419,11 +444,10 @@ async function uploadObjects(
     );
   });
   for (let i = 0; i < promises.length; i++) {
-    process.stdout.clearLine(0);
-    process.stdout.cursorTo(0);
-    process.stdout.write(
-      `Seeding of Scores ${(i / promises.length) * 100}% complete`
-    );
+    if (i + 1 >= promises.length || i % Math.ceil(promises.length / 10) === 0)
+      console.log(
+        `Seeding of Scores ${((i + 1) / promises.length) * 100}% complete`
+      );
     await promises[i];
   }
 }
@@ -434,13 +458,15 @@ function createObjects(
   colorTags: (string | null)[],
   project1: Project,
   project2: Project,
-  promptIds: Map<string, string[]>
+  promptIds: Map<string, string[]>,
+  configIdsAndNames: Map<string, { name: string; id: string }[]>
 ) {
   const traces: Prisma.TraceCreateManyInput[] = [];
   const observations: Prisma.ObservationCreateManyInput[] = [];
   const scores: Prisma.ScoreCreateManyInput[] = [];
   const sessions: Prisma.TraceSessionCreateManyInput[] = [];
   const events: Prisma.ObservationCreateManyInput[] = [];
+  const configs: Prisma.ScoreConfigCreateManyInput[] = [];
 
   for (let i = 0; i < traceVolume; i++) {
     // print progress to console with a progress bar that refreshes every 10 iterations
@@ -492,17 +518,28 @@ function createObjects(
 
     traces.push(trace);
 
+    const configArray = configIdsAndNames.get(projectId) ?? [];
+    const randomIndex = Math.floor(Math.random() * 3);
+    const config =
+      configArray.length >= randomIndex - 1 && configArray[randomIndex];
+    const { name: annotationScoreName, id: configId } = config || {
+      name: "manual-score",
+      id: undefined,
+    };
+
     const traceScores = [
       ...(Math.random() > 0.5
         ? [
             {
               traceId: trace.id,
-              name: "manual-score",
+              name: annotationScoreName,
               value: Math.floor(Math.random() * 3) - 1,
               timestamp: traceTs,
               source: ScoreSource.ANNOTATION,
               projectId,
               authorUserId: `user-${i}`,
+              dataType: ScoreDataType.NUMERIC,
+              ...(configId ? { configId } : {}),
             },
           ]
         : []),
@@ -515,6 +552,7 @@ function createObjects(
               timestamp: traceTs,
               source: ScoreSource.API,
               projectId,
+              dataType: ScoreDataType.NUMERIC,
             },
           ]
         : []),
@@ -753,6 +791,7 @@ function createObjects(
     traces,
     observations,
     scores,
+    configs,
     sessions: uniqueSessions,
     events,
   };
@@ -934,4 +973,81 @@ async function generatePrompts(project: Project) {
     promptIds.push(promptId);
   }
   return promptIds;
+}
+
+async function generateConfigsForProject(projects: Project[]) {
+  const projectIdsToConfigs: Map<string, { name: string; id: string }[]> =
+    new Map();
+
+  await Promise.all(
+    projects.map(async (project) => {
+      const configNameAndId = await generateConfigs(project);
+      projectIdsToConfigs.set(project.id, configNameAndId);
+    })
+  );
+  return projectIdsToConfigs;
+}
+
+async function generateConfigs(project: Project) {
+  const configNameAndId: { name: string; id: string }[] = [];
+
+  const configs = [
+    {
+      id: `config-${v4()}`,
+      name: "manual-score",
+      dataType: ScoreDataType.NUMERIC,
+      projectId: project.id,
+      isArchived: false,
+    },
+    {
+      id: `config-${v4()}`,
+      projectId: project.id,
+      name: "Accuracy",
+      dataType: ScoreDataType.CATEGORICAL,
+      categories: [
+        { label: "Incorrect", value: 0 },
+        { label: "Partially Correct", value: 1 },
+        { label: "Correct", value: 2 },
+      ],
+      isArchived: false,
+    },
+    {
+      id: `config-${v4()}`,
+      projectId: project.id,
+      name: "Toxicity",
+      dataType: ScoreDataType.BOOLEAN,
+      categories: [
+        { label: "True", value: 1 },
+        { label: "False", value: 0 },
+      ],
+      description:
+        "Used to indicate if text was harmful or offensive in nature.",
+      isArchived: false,
+    },
+  ];
+
+  for (const config of configs) {
+    await prisma.scoreConfig.upsert({
+      where: {
+        id_projectId: {
+          projectId: config.projectId,
+          id: config.id,
+        },
+      },
+      create: {
+        id: config.id,
+        projectId: config.projectId,
+        name: config.name,
+        dataType: config.dataType,
+        categories: config.categories,
+        isArchived: config.isArchived,
+      },
+      update: {
+        id: config.id,
+      },
+    });
+    configNameAndId.push({ name: config.name, id: config.id });
+  }
+
+  return configNameAndId;
 }

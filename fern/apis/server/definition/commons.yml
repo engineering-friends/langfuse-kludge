@@ -111,7 +111,24 @@ types:
       totalCost:
         docs: USD total cost, defaults to input+output
         type: optional<double>
-
+  ScoreConfig:
+    docs: Configuration for a score
+    properties:
+      id: string
+      name: string
+      createdAt: datetime
+      updatedAt: datetime
+      projectId: string
+      dataType: ScoreDataType
+      isArchived: boolean
+      minValue: optional<double>
+      maxValue: optional<double>
+      categories: optional<list<ConfigCategory>>
+      description: optional<string>
+  ConfigCategory:
+    properties:
+      value: double
+      label: string
   Score:
     properties:
       id: string
@@ -122,7 +139,7 @@ types:
       observationId: optional<string>
       timestamp: datetime
       comment: optional<string>
-  DatasetCore:
+  Dataset:
     properties:
       id: string
       name: string
@@ -131,21 +148,6 @@ types:
       projectId: string
       createdAt: datetime
       updatedAt: datetime
-  DatasetWithReferences: # GET datasets
-    extends: DatasetCore
-    properties:
-      items:
-        type: list<string>
-        docs: list of dataset item ids
-      runs:
-        type: list<string>
-        docs: list of dataset run names
-  Dataset: # GET datasets/[name]
-    docs: Dataset including all items
-    extends: DatasetCore
-    properties:
-      items: list<DatasetItem>
-      runs: list<string>
   DatasetItem:
     properties:
       id: string
@@ -179,7 +181,43 @@ types:
       datasetName: string
       createdAt: datetime
       updatedAt: datetime
+  DatasetRunWithItems:
+    extends: DatasetRun
+    properties:
       datasetRunItems: list<DatasetRunItem>
+  Model:
+    docs: Model definition used for transforming usage into USD cost and/or tokenization.
+    properties:
+      id: string
+      modelName:
+        docs: "Name of the model definition. If multiple with the same name exist, they are applied in the following order: (1) custom over built-in, (2) newest according to startTime where model.startTime<observation.startTime"
+        type: string
+      matchPattern:
+        docs: "Regex pattern which matches this model definition to generation.model. Useful in case of fine-tuned models. If you want to exact match, use `(?i)^modelname$`"
+        type: string
+      startDate:
+        docs: Apply only to generations which are newer than this ISO date.
+        type: optional<date>
+      unit:
+        docs: Unit used by this model.
+        type: ModelUsageUnit
+      inputPrice:
+        docs: Price (USD) per input unit
+        type: optional<double>
+      outputPrice:
+        docs: Price (USD) per output unit
+        type: optional<double>
+      totalPrice:
+        docs: Price (USD) per total unit. Cannot be set if input or output price is set.
+        type: optional<double>
+      tokenizerId:
+        docs: Optional. Tokenizer to be applied to observations which match to this model. See docs for more details.
+        type: optional<string>
+      tokenizerConfig:
+        docs: Optional. Configuration for the selected tokenizer. Needs to be JSON. See docs for more details.
+        type: optional<unknown>
+      isLangfuseManaged:
+        type: boolean
 
   # Utilities
   ModelUsageUnit:
@@ -212,6 +250,11 @@ types:
       - ANNOTATION
       - API
       - EVAL
+  ScoreDataType:
+    enum:
+      - NUMERIC
+      - BOOLEAN
+      - CATEGORICAL
 
 errors:
   Error:

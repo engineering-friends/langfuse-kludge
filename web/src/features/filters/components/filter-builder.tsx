@@ -25,7 +25,7 @@ import {
   filterOperators,
   singleFilter,
 } from "@langfuse/shared";
-import { NonEmptyString } from "@/src/utils/zod";
+import { NonEmptyString } from "@langfuse/shared";
 import { cn } from "@/src/utils/tailwind";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
 
@@ -34,10 +34,12 @@ export function PopoverFilterBuilder({
   columns,
   filterState,
   onChange,
+  columnsWithCustomSelect = [],
 }: {
   columns: ColumnDefinition[];
   filterState: FilterState;
   onChange: Dispatch<SetStateAction<FilterState>>;
+  columnsWithCustomSelect?: string[];
 }) {
   const capture = usePostHogClientCapture();
   const [wipFilterState, _setWipFilterState] =
@@ -118,6 +120,7 @@ export function PopoverFilterBuilder({
             columns={columns}
             filterState={wipFilterState}
             onChange={setWipFilterState}
+            columnsWithCustomSelect={columnsWithCustomSelect}
           />
         </PopoverContent>
       </Popover>
@@ -211,11 +214,13 @@ function FilterBuilderForm({
   filterState,
   onChange,
   disabled,
+  columnsWithCustomSelect = [],
 }: {
   columns: ColumnDefinition[];
   filterState: WipFilterState;
   onChange: Dispatch<SetStateAction<WipFilterState>>;
   disabled?: boolean;
+  columnsWithCustomSelect?: string[];
 }) {
   const handleFilterChange = (filter: WipFilterCondition, i: number) => {
     onChange((prev) => {
@@ -263,11 +268,17 @@ function FilterBuilderForm({
                     value={column ? column.id : ""}
                     disabled={disabled}
                     onValueChange={(value) => {
+                      const col = columns.find((c) => c.id === value);
                       handleFilterChange(
                         {
-                          column: columns.find((c) => c.id === value)?.name,
-                          type: columns.find((c) => c.id === value)?.type,
-                          operator: undefined,
+                          column: col?.name,
+                          type: col?.type,
+                          operator:
+                            // does not work as expected on eval-template form when embedded into form via InlineFilterBuilder
+                            // col?.type !== undefined &&
+                            // filterOperators[col.type]?.length > 0
+                            //   ? (filterOperators[col.type][0] as any) // operator matches type
+                            undefined,
                           value: undefined,
                           key: undefined,
                         },
@@ -419,6 +430,10 @@ function FilterBuilderForm({
                       }
                       values={Array.isArray(filter.value) ? filter.value : []}
                       disabled={disabled}
+                      isCustomSelectEnabled={
+                        column?.type === filter.type &&
+                        columnsWithCustomSelect.includes(column.id)
+                      }
                     />
                   ) : filter.type === "boolean" ? (
                     <Select

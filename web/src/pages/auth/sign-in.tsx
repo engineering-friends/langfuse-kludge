@@ -14,8 +14,8 @@ import { env } from "@/src/env.mjs";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { FcGoogle } from "react-icons/fc";
 import { FaGithub } from "react-icons/fa";
-import { SiOkta, SiAuth0 } from "react-icons/si";
-import { TbBrandAzure } from "react-icons/tb";
+import { SiOkta, SiAuth0, SiAmazoncognito } from "react-icons/si";
+import { TbBrandAzure, TbBrandOauth } from "react-icons/tb";
 import { signIn } from "next-auth/react";
 import Head from "next/head";
 import Link from "next/link";
@@ -49,6 +49,12 @@ export type PageProps = {
     okta: boolean;
     azureAd: boolean;
     auth0: boolean;
+    cognito: boolean;
+    custom:
+      | {
+          name: string;
+        }
+      | false;
     sso: boolean;
   };
   signUpDisabled: boolean;
@@ -80,6 +86,17 @@ export const getServerSideProps: GetServerSideProps<PageProps> = async () => {
           env.AUTH_AUTH0_CLIENT_ID !== undefined &&
           env.AUTH_AUTH0_CLIENT_SECRET !== undefined &&
           env.AUTH_AUTH0_ISSUER !== undefined,
+        cognito:
+          env.AUTH_COGNITO_CLIENT_ID !== undefined &&
+          env.AUTH_COGNITO_CLIENT_SECRET !== undefined &&
+          env.AUTH_COGNITO_ISSUER !== undefined,
+        custom:
+          env.AUTH_CUSTOM_CLIENT_ID !== undefined &&
+          env.AUTH_CUSTOM_CLIENT_SECRET !== undefined &&
+          env.AUTH_CUSTOM_ISSUER !== undefined &&
+          env.AUTH_CUSTOM_NAME !== undefined
+            ? { name: env.AUTH_CUSTOM_NAME }
+            : false,
         sso,
       },
       signUpDisabled: env.AUTH_DISABLE_SIGNUP === "true",
@@ -167,6 +184,30 @@ export function SSOButtons({
             >
               <SiAuth0 className="mr-3" size={18} />
               Auth0
+            </Button>
+          )}
+          {authProviders.cognito && (
+            <Button
+              onClick={() => {
+                capture("sign_in:button_click", { provider: "cognito" });
+                void signIn("cognito");
+              }}
+              variant="secondary"
+            >
+              <SiAmazoncognito className="mr-3" size={18} />
+              Cognito
+            </Button>
+          )}
+          {authProviders.custom && (
+            <Button
+              onClick={() => {
+                capture("sign_in:button_click", { provider: "custom" });
+                void signIn("custom");
+              }}
+              variant="secondary"
+            >
+              <TbBrandOauth className="mr-3" size={18} />
+              {authProviders.custom.name}
             </Button>
           )}
         </div>
@@ -335,7 +376,16 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
                     name="password"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Password</FormLabel>
+                        <FormLabel>
+                          Password{" "}
+                          <Link
+                            href="/auth/reset-password"
+                            className="ml-1 text-xs text-primary-accent hover:text-hover-primary-accent"
+                            title="What is this?"
+                          >
+                            (forgot password?)
+                          </Link>
+                        </FormLabel>
                         <FormControl>
                           <PasswordInput {...field} />
                         </FormControl>
@@ -390,7 +440,9 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
               <div className="text-center text-sm font-medium text-destructive">
                 {credentialsFormError}
                 <br />
-                Contact support if this error is unexpected.
+                Contact support if this error is unexpected.{" "}
+                {env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION !== undefined &&
+                  "Make sure you are using the correct cloud data region."}
               </div>
             ) : null}
             <SSOButtons authProviders={authProviders} />
@@ -421,7 +473,7 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
               No account yet?{" "}
               <Link
                 href="/auth/sign-up"
-                className="hover:text-hover-primary-accent font-semibold leading-6 text-primary-accent"
+                className="font-semibold leading-6 text-primary-accent hover:text-hover-primary-accent"
               >
                 Sign up
               </Link>

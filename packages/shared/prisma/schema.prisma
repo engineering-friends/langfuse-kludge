@@ -115,6 +115,7 @@ model Project {
     PosthogIntegration PosthogIntegration[]
     Score              Score[]
     scoreConfig        ScoreConfig[]
+    BatchExport        BatchExport[]
 
     @@map("projects")
 }
@@ -144,9 +145,13 @@ model LlmApiKeys {
     createdAt DateTime @default(now()) @map("created_at")
     updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
-    provider         String
-    displaySecretKey String @map("display_secret_key")
-    secretKey        String @map("secret_key")
+    provider          String
+    adapter           String // This controls the interface that is used to connect with the LLM, e.g. 'openai' or 'anthropic'
+    displaySecretKey  String   @map("display_secret_key")
+    secretKey         String   @map("secret_key")
+    baseURL           String?  @map("base_url")
+    customModels      String[] @default([]) @map("custom_models")
+    withDefaultModels Boolean  @default(true) @map("with_default_models")
 
     projectId String  @map("project_id")
     project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -206,6 +211,7 @@ model TraceSession {
     @@id([id, projectId])
     @@index([projectId])
     @@index([createdAt])
+    @@index([updatedAt])
     @@map("trace_sessions")
 }
 
@@ -232,19 +238,16 @@ model Trace {
     createdAt  DateTime      @default(now()) @map("created_at")
     updatedAt  DateTime      @default(now()) @updatedAt @map("updated_at")
 
-    DatasetRunItems DatasetRunItems[]
-    DatasetItem     DatasetItem[]
-    JobExecution    JobExecution[]
+    DatasetItem  DatasetItem[]
+    JobExecution JobExecution[]
 
     @@index([projectId])
+    @@index([projectId, timestamp])
     @@index([sessionId])
     @@index([name])
     @@index([userId])
     @@index([id, userId])
-    @@index([externalId])
     @@index(timestamp)
-    @@index(release)
-    @@index(updatedAt)
     @@index(createdAt)
     @@index([tags(ops: ArrayOps)], type: Gin)
     @@map("traces")
@@ -293,27 +296,36 @@ model Observation {
     statusMessage       String?          @map("status_message")
     version             String?
     createdAt           DateTime         @default(now()) @map("created_at")
+    updatedAt           DateTime         @default(now()) @updatedAt @map("updated_at")
 
     // GENERATION ONLY
-    model               String?
-    internalModel       String?           @map("internal_model")
-    modelParameters     Json?
-    input               Json?
-    output              Json?
-    promptTokens        Int               @default(0) @map("prompt_tokens")
-    completionTokens    Int               @default(0) @map("completion_tokens")
-    totalTokens         Int               @default(0) @map("total_tokens")
-    unit                String?
-    inputCost           Decimal?          @map("input_cost")
-    outputCost          Decimal?          @map("output_cost")
-    totalCost           Decimal?          @map("total_cost")
-    completionStartTime DateTime?         @map("completion_start_time")
-    project             Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-    derivedDatasetItems DatasetItem[]
-    datasetRunItems     DatasetRunItems[]
+    model           String?
+    internalModel   String? @map("internal_model")
+    internalModelId String? @map("internal_model_id")
 
-    promptId String? @map("prompt_id")
-    prompt   Prompt? @relation(fields: [promptId], onDelete: SetNull, references: [id])
+    modelParameters  Json?
+    input            Json?
+    output           Json?
+    promptTokens     Int     @default(0) @map("prompt_tokens")
+    completionTokens Int     @default(0) @map("completion_tokens")
+    totalTokens      Int     @default(0) @map("total_tokens")
+    unit             String?
+
+    // User provided cost at ingestion
+    inputCost  Decimal? @map("input_cost")
+    outputCost Decimal? @map("output_cost")
+    totalCost  Decimal? @map("total_cost")
+
+    // Calculated cost
+    calculatedInputCost  Decimal? @map("calculated_input_cost")
+    calculatedOutputCost Decimal? @map("calculated_output_cost")
+    calculatedTotalCost  Decimal? @map("calculated_total_cost")
+
+    completionStartTime DateTime?     @map("completion_start_time")
+    project             Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    derivedDatasetItems DatasetItem[]
+
+    promptId String? @map("prompt_id") // no fk constraint, prompt can be deleted
 
     @@unique([id, projectId])
     @@index([projectId, internalModel, startTime, unit])
@@ -325,9 +337,9 @@ model Observation {
     @@index(startTime)
     @@index(createdAt)
     @@index(projectId)
-    @@index(parentObservationId)
     @@index(model)
     @@index(internalModel)
+    @@index([projectId, promptId])
     @@index(promptId)
     @@index([projectId, startTime, type])
     @@map("observations")
@@ -406,6 +418,8 @@ model Score {
     observationId String?        @map("observation_id")
     configId      String?        @map("config_id")
     stringValue   String?        @map("string_value")
+    createdAt     DateTime       @default(now()) @map("created_at")
+    updatedAt     DateTime       @default(now()) @updatedAt @map("updated_at")
     dataType      ScoreDataType  @default(NUMERIC) @map("data_type")
     JobExecution  JobExecution[]
     scoreConfig   ScoreConfig?   @relation(fields: [configId], references: [id], onDelete: SetNull)
@@ -414,11 +428,13 @@ model Score {
     @@index(timestamp)
     @@index([value])
     @@index([projectId])
+    @@index([projectId, name])
     @@index([authorUserId])
     @@index([configId])
     @@index([traceId], type: Hash)
     @@index([observationId], type: Hash)
     @@index([source])
+    @@index([createdAt])
     @@map("scores")
 }
 
@@ -448,35 +464,15 @@ model ScoreConfig {
     @@index([isArchived])
     @@index([projectId])
     @@index([categories])
+    @@index([createdAt])
+    @@index([updatedAt])
     @@map("score_configs")
 }
 
 enum ScoreDataType {
     CATEGORICAL
     NUMERIC
-}
-
-enum PricingUnit {
-    PER_1000_TOKENS
-    PER_1000_CHARS
-}
-
-enum TokenType {
-    PROMPT
-    COMPLETION
-    TOTAL
-}
-
-model Pricing {
-    id          String      @id @default(cuid())
-    modelName   String      @map("model_name")
-    pricingUnit PricingUnit @default(PER_1000_TOKENS) @map("pricing_unit")
-    price       Decimal
-    currency    String      @default("USD")
-    tokenType   TokenType   @map("token_type")
-
-    @@index(modelName)
-    @@map("pricings")
+    BOOLEAN
 }
 
 model CronJobs {
@@ -502,6 +498,8 @@ model Dataset {
 
     @@unique([projectId, name])
     @@index([projectId], type: Hash)
+    @@index([createdAt])
+    @@index([updatedAt])
     @@map("datasets")
 }
 
@@ -521,8 +519,11 @@ model DatasetItem {
     updatedAt           DateTime          @default(now()) @updatedAt @map("updated_at")
     datasetRunItems     DatasetRunItems[]
 
+    @@index([sourceTraceId], type: Hash)
     @@index([sourceObservationId], type: Hash)
     @@index([datasetId], type: Hash)
+    @@index([createdAt])
+    @@index([updatedAt])
     @@map("dataset_items")
 }
 
@@ -544,26 +545,28 @@ model DatasetRuns {
 
     @@unique([datasetId, name])
     @@index([datasetId], type: Hash)
+    @@index([createdAt])
+    @@index([updatedAt])
     @@map("dataset_runs")
 }
 
 model DatasetRunItems {
-    id            String       @id @default(cuid())
-    datasetRunId  String       @map("dataset_run_id")
-    datasetRun    DatasetRuns  @relation(fields: [datasetRunId], references: [id], onDelete: Cascade)
-    datasetItemId String       @map("dataset_item_id")
-    datasetItem   DatasetItem  @relation(fields: [datasetItemId], references: [id], onDelete: Cascade)
-    traceId       String       @map("trace_id")
-    trace         Trace        @relation(fields: [traceId], references: [id], onDelete: Cascade)
-    observationId String?      @map("observation_id")
-    observation   Observation? @relation(fields: [observationId], references: [id], onDelete: Cascade)
-    createdAt     DateTime     @default(now()) @map("created_at")
-    updatedAt     DateTime     @default(now()) @updatedAt @map("updated_at")
+    id            String      @id @default(cuid())
+    datasetRunId  String      @map("dataset_run_id")
+    datasetRun    DatasetRuns @relation(fields: [datasetRunId], references: [id], onDelete: Cascade)
+    datasetItemId String      @map("dataset_item_id")
+    datasetItem   DatasetItem @relation(fields: [datasetItemId], references: [id], onDelete: Cascade)
+    traceId       String      @map("trace_id")
+    observationId String?     @map("observation_id")
+    createdAt     DateTime    @default(now()) @map("created_at")
+    updatedAt     DateTime    @default(now()) @updatedAt @map("updated_at")
 
     @@index([datasetRunId], type: Hash)
     @@index([datasetItemId], type: Hash)
     @@index([observationId], type: Hash)
     @@index([traceId])
+    @@index([createdAt])
+    @@index([updatedAt])
     @@map("dataset_run_items")
 }
 
@@ -592,20 +595,21 @@ model Prompt {
 
     createdBy String @map("created_by")
 
-    prompt      Json
-    name        String
-    version     Int
-    type        String        @default("text")
-    isActive    Boolean?      @map("is_active") // Deprecated. To be removed once 'production' labels work as expected.
-    config      Json          @default("{}")
-    tags        String[]      @default([])
-    labels      String[]      @default([])
-    Observation Observation[]
+    prompt   Json
+    name     String
+    version  Int
+    type     String   @default("text")
+    isActive Boolean? @map("is_active") // Deprecated. To be removed once 'production' labels work as expected.
+    config   Json     @default("{}")
+    tags     String[] @default([])
+    labels   String[] @default([])
 
     @@unique([projectId, name, version])
     @@index([projectId, name, version])
     @@index([projectId, id])
     @@index([projectId])
+    @@index([createdAt])
+    @@index([updatedAt])
     @@index([tags(ops: ArrayOps)], type: Gin)
     @@map("prompts")
 }
@@ -653,6 +657,7 @@ model AuditLog {
 
     @@index([projectId])
     @@index([createdAt])
+    @@index([updatedAt])
     @@map("audit_logs")
 }
 
@@ -668,6 +673,7 @@ model EvalTemplate {
     version          Int
     prompt           String
     model            String
+    provider         String
     modelParams      Json               @map("model_params")
     vars             String[]           @default([])
     outputSchema     Json               @map("output_schema")
@@ -750,6 +756,7 @@ model JobExecution {
     @@index([jobOutputScoreId])
     @@index([jobInputTraceId])
     @@index([createdAt])
+    @@index([updatedAt])
     @@map("job_executions")
 }
 
@@ -779,4 +786,28 @@ model PosthogIntegration {
 
     @@index([projectId])
     @@map("posthog_integrations")
+}
+
+model BatchExport {
+    id        String   @id @default(cuid())
+    createdAt DateTime @default(now()) @map("created_at")
+    updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+    projectId String  @map("project_id")
+    project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    userId    String  @map("user_id")
+
+    finishedAt DateTime? @map("finished_at")
+    expiresAt  DateTime? @map("expires_at")
+
+    name   String
+    status String
+    query  Json
+    format String
+    url    String?
+    log    String?
+
+    @@index([projectId, userId])
+    @@index([status])
+    @@map("batch_exports")
 }
