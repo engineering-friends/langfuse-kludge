@@ -1,22 +1,25 @@
 import { z } from "zod";
+
+import { auditLog } from "@/src/features/audit-logs/auditLog";
+import { throwIfNoProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import {
   createTRPCRouter,
-  protectedProjectProcedure,
   protectedGetSessionProcedure,
+  protectedProjectProcedure,
 } from "@/src/server/api/trpc";
 import {
-  singleFilter,
-  type SessionOptions,
+  filterAndValidateDbScoreList,
   getSessionTableSQL,
+  orderBy,
+  paginationZod,
+  type SessionOptions,
+  singleFilter,
 } from "@langfuse/shared";
 import { Prisma } from "@langfuse/shared/src/db";
-import { paginationZod } from "@langfuse/shared";
-import { throwIfNoAccess } from "@/src/features/rbac/utils/checkAccess";
 import { TRPCError } from "@trpc/server";
-import { orderBy } from "@langfuse/shared";
-import { auditLog } from "@/src/features/audit-logs/auditLog";
-import type Decimal from "decimal.js";
 
+import type Decimal from "decimal.js";
+import { traceException } from "@langfuse/shared/src/server";
 const SessionFilterOptions = z.object({
   projectId: z.string(), // Required for protectedProjectProcedure
   filter: z.array(singleFilter).nullable(),
@@ -73,17 +76,17 @@ export const sessionRouter = createTRPCRouter({
         const userIds = await ctx.prisma.$queryRaw<
           Array<{ value: string }>
         >(Prisma.sql`
-        SELECT 
-          traces.user_id AS value
-        FROM traces
-        WHERE 
-          traces.session_id IS NOT NULL
-          AND traces.user_id IS NOT NULL
-          AND traces.project_id = ${input.projectId}
-        GROUP BY
-          traces.user_id
-        LIMIT 1000;
-      `);
+          SELECT 
+            traces.user_id AS value
+          FROM traces
+          WHERE 
+            traces.session_id IS NOT NULL
+            AND traces.user_id IS NOT NULL
+            AND traces.project_id = ${input.projectId}
+          GROUP BY traces.user_id 
+          ORDER BY traces.user_id ASC
+          LIMIT 1000;
+        `);
 
         const res: SessionOptions = {
           userIds: userIds,
@@ -136,6 +139,11 @@ export const sessionRouter = createTRPCRouter({
           },
         });
 
+        const validatedScores = filterAndValidateDbScoreList(
+          scores,
+          traceException,
+        );
+
         const totalCostQuery = Prisma.sql`
         SELECT
           SUM(COALESCE(o."calculated_total_cost", 0)) AS "totalCost"
@@ -155,7 +163,7 @@ export const sessionRouter = createTRPCRouter({
           ...session,
           traces: session.traces.map((t) => ({
             ...t,
-            scores: scores.filter((s) => s.traceId === t.id),
+            scores: validatedScores.filter((s) => s.traceId === t.id),
           })),
           totalCost: costData?.totalCost ?? 0,
           users: [
@@ -182,7 +190,7 @@ export const sessionRouter = createTRPCRouter({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        throwIfNoAccess({
+        throwIfNoProjectAccess({
           session: ctx.session,
           projectId: input.projectId,
           scope: "objects:bookmark",
@@ -235,7 +243,7 @@ export const sessionRouter = createTRPCRouter({
     )
     .mutation(async ({ input, ctx }) => {
       try {
-        throwIfNoAccess({
+        throwIfNoProjectAccess({
           session: ctx.session,
           projectId: input.projectId,
           scope: "objects:publish",

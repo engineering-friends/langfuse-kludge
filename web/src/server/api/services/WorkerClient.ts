@@ -1,14 +1,16 @@
 import { env } from "@/src/env.mjs";
-import { type EventBodyType } from "@langfuse/shared";
+import {
+  instrument,
+  type EventBodyType,
+  type IngestionApiSchemaWithProjectId,
+} from "@langfuse/shared/src/server";
 
 export class WorkerClient {
   readonly enabled: boolean;
 
   constructor() {
     this.enabled = Boolean(
-      env.LANGFUSE_WORKER_HOST &&
-        env.LANGFUSE_WORKER_PASSWORD &&
-        env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION,
+      env.LANGFUSE_WORKER_HOST && env.LANGFUSE_WORKER_PASSWORD,
     );
 
     if (!this.enabled) {
@@ -19,8 +21,36 @@ export class WorkerClient {
   async sendEvent(event: EventBodyType): Promise<void> {
     if (!this.enabled) return;
 
-    await fetch(`${env.LANGFUSE_WORKER_HOST}/api/events`, {
+    await this.sendWorkerRequest({
       method: "POST",
+      route: "/api/events",
+      body: event,
+    }).catch((error) => {
+      console.error("Error sending events to worker", error);
+    });
+  }
+
+  async sendIngestionBatch(params: IngestionApiSchemaWithProjectId) {
+    await instrument({ name: "insert-clickhouse" }, async () => {
+      await this.sendWorkerRequest({
+        method: "POST",
+        route: "/api/ingestion",
+        body: params,
+      }).catch((error) => {
+        console.error("Error sending events to worker", error);
+      });
+    });
+  }
+
+  private async sendWorkerRequest(params: {
+    route: string;
+    method: "POST";
+    body: any;
+  }) {
+    const { route, method, body } = params;
+
+    return fetch(env.LANGFUSE_WORKER_HOST + route, {
+      method,
       headers: {
         "Content-Type": "application/json",
         Authorization:
@@ -29,9 +59,7 @@ export class WorkerClient {
             "base64",
           ),
       },
-      body: JSON.stringify(event),
-    }).catch((error) => {
-      console.error("Error sending events to worker", error);
+      body: JSON.stringify(body),
     });
   }
 }

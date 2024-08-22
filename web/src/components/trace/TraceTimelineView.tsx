@@ -1,6 +1,6 @@
 import { Card } from "@/src/components/ui/card";
 import { type ObservationReturnType } from "@/src/server/api/routers/traces";
-import { type Score, type Trace } from "@langfuse/shared";
+import { type APIScore, type Trace } from "@langfuse/shared";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
@@ -29,6 +29,7 @@ import {
 import { TracePreview } from "@/src/components/trace/TracePreview";
 import { ObservationPreview } from "@/src/components/trace/ObservationPreview";
 import useSessionStorage from "@/src/components/useSessionStorage";
+import { api } from "@/src/utils/api";
 
 // Fixed widths for styling for v1
 const SCALE_WIDTH = 800;
@@ -44,12 +45,14 @@ const PREDEFINED_STEP_SIZES = [
 
 const getNestedObservationKeys = (
   observations: NestedObservation[],
-): string[] => {
+): { keys: string[]; ids: string[] } => {
   const keys: string[] = [];
+  const ids: string[] = [];
 
   const collectKeys = (obs: NestedObservation[]) => {
     obs.forEach((observation) => {
       keys.push(`observation-${observation.id}`);
+      ids.push(observation.id);
       if (observation.children) {
         collectKeys(observation.children);
       }
@@ -57,7 +60,7 @@ const getNestedObservationKeys = (
   };
 
   collectKeys(observations);
-  return keys;
+  return { keys, ids };
 };
 
 const calculateStepSize = (latency: number, scaleWidth: number) => {
@@ -181,15 +184,17 @@ function TraceTreeItem({
   scores,
   observations,
   cardWidth,
+  commentCounts,
 }: {
   observation: NestedObservation;
   level: number;
   traceStartTime: Date;
   totalScaleSpan: number;
   projectId: string;
-  scores: Score[];
+  scores: APIScore[];
   observations: Array<ObservationReturnType>;
   cardWidth: number;
+  commentCounts?: Map<string, number>;
 }) {
   const { startTime, endTime } = observation || {};
   const [backgroundColor, setBackgroundColor] = useState("");
@@ -232,6 +237,7 @@ function TraceTreeItem({
                 projectId={projectId}
                 currentObservationId={observation.id}
                 traceId={observation.traceId}
+                commentCounts={commentCounts}
               />
             </div>
           </>
@@ -250,6 +256,7 @@ function TraceTreeItem({
               scores={scores}
               observations={observations}
               cardWidth={cardWidth}
+              commentCounts={commentCounts}
             />
           ))
         : null}
@@ -266,7 +273,7 @@ export function TraceTimelineView({
   trace: Trace & { latency?: number };
   observations: Array<ObservationReturnType>;
   projectId: string;
-  scores: Score[];
+  scores: APIScore[];
 }) {
   const { latency, name, id } = trace;
   const [backgroundColor, setBackgroundColor] = useState("");
@@ -298,9 +305,41 @@ export function TraceTimelineView({
     () => nestObservations(observations),
     [observations],
   );
-  const nestedObservationKeys = useMemo(
+  const { keys: nestedObservationKeys, ids: nestedObservationIds } = useMemo(
     () => getNestedObservationKeys(nestedObservations),
     [nestedObservations],
+  );
+
+  const observationCommentCounts = api.comments.getCountsByObjectIds.useQuery(
+    {
+      projectId: trace.projectId,
+      objectIds: nestedObservationIds,
+      objectType: "OBSERVATION",
+    },
+    {
+      trpc: {
+        context: {
+          skipBatch: true,
+        },
+      },
+      refetchOnMount: false, // prevents refetching loops
+    },
+  );
+
+  const traceCommentCounts = api.comments.getCountsByObjectIds.useQuery(
+    {
+      projectId: trace.projectId,
+      objectIds: [trace.id],
+      objectType: "TRACE",
+    },
+    {
+      trpc: {
+        context: {
+          skipBatch: true,
+        },
+      },
+      refetchOnMount: false, // prevents refetching loops
+    },
   );
 
   if (!latency) return null;
@@ -414,6 +453,7 @@ export function TraceTimelineView({
                       trace={trace}
                       observations={observations}
                       scores={scores}
+                      commentCounts={traceCommentCounts.data}
                     />
                   </div>
                 </TreeItemInner>
@@ -431,6 +471,7 @@ export function TraceTimelineView({
                       scores={scores}
                       observations={observations}
                       cardWidth={cardWidth}
+                      commentCounts={observationCommentCounts.data}
                     />
                   ))
                 : null}

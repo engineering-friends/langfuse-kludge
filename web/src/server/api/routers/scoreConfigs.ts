@@ -1,13 +1,19 @@
-import { throwIfNoAccess } from "@/src/features/rbac/utils/checkAccess";
+import { z } from "zod";
+
+import { throwIfNoProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import {
   createTRPCRouter,
   protectedProjectProcedure,
 } from "@/src/server/api/trpc";
-import { optionalPaginationZod } from "@langfuse/shared";
-
+import {
+  Category,
+  filterAndValidateDbScoreConfigList,
+  optionalPaginationZod,
+  validateDbScoreConfig,
+} from "@langfuse/shared";
 import { ScoreDataType } from "@langfuse/shared/src/db";
-import { z } from "zod";
-import { categoriesList } from "@langfuse/shared";
+import { traceException } from "@langfuse/shared/src/server";
+import { auditLog } from "@/src/features/audit-logs/auditLog";
 
 const ScoreConfigAllInput = z.object({
   projectId: z.string(), // Required for protectedProjectProcedure
@@ -21,38 +27,34 @@ export const scoreConfigsRouter = createTRPCRouter({
   all: protectedProjectProcedure
     .input(ScoreConfigAllInputPaginated)
     .query(async ({ input, ctx }) => {
-      throwIfNoAccess({
+      throwIfNoProjectAccess({
         session: ctx.session,
         projectId: input.projectId,
         scope: "scoreConfigs:read",
       });
 
-      try {
-        const configs = await ctx.prisma.scoreConfig.findMany({
-          where: {
-            projectId: input.projectId,
-          },
-          ...(input.limit !== undefined && input.page !== undefined
-            ? { take: input.limit, skip: input.page * input.limit }
-            : undefined),
-          orderBy: {
-            createdAt: "desc",
-          },
-        });
+      const configs = await ctx.prisma.scoreConfig.findMany({
+        where: {
+          projectId: input.projectId,
+        },
+        ...(input.limit !== undefined && input.page !== undefined
+          ? { take: input.limit, skip: input.page * input.limit }
+          : undefined),
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
 
-        const configsCount = await ctx.prisma.scoreConfig.count({
-          where: {
-            projectId: input.projectId,
-          },
-        });
+      const configsCount = await ctx.prisma.scoreConfig.count({
+        where: {
+          projectId: input.projectId,
+        },
+      });
 
-        return {
-          configs,
-          totalCount: configsCount,
-        };
-      } catch (error) {
-        console.log(error);
-      }
+      return {
+        configs: filterAndValidateDbScoreConfigList(configs, traceException),
+        totalCount: configsCount,
+      };
     }),
   create: protectedProjectProcedure
     .input(
@@ -62,41 +64,32 @@ export const scoreConfigsRouter = createTRPCRouter({
         dataType: z.nativeEnum(ScoreDataType),
         minValue: z.number().optional(),
         maxValue: z.number().optional(),
-        categories: categoriesList.optional(),
+        categories: z.array(Category).optional(),
         description: z.string().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      throwIfNoAccess({
+      throwIfNoProjectAccess({
         session: ctx.session,
         projectId: input.projectId,
         scope: "scoreConfigs:CUD",
       });
 
-      try {
-        const existingConfig = await ctx.prisma.scoreConfig.findFirst({
-          where: {
-            projectId: input.projectId,
-            name: input.name,
-            dataType: input.dataType,
-          },
-        });
+      const config = await ctx.prisma.scoreConfig.create({
+        data: {
+          ...input,
+        },
+      });
 
-        if (existingConfig)
-          throw new Error(
-            "Score config with this name and data type already exists",
-          );
+      await auditLog({
+        session: ctx.session,
+        resourceType: "scoreConfig",
+        resourceId: config.id,
+        action: "create",
+        after: config,
+      });
 
-        const config = await ctx.prisma.scoreConfig.create({
-          data: {
-            ...input,
-          },
-        });
-
-        return config;
-      } catch (error) {
-        console.log(error);
-      }
+      return validateDbScoreConfig(config);
     }),
   update: protectedProjectProcedure
     .input(
@@ -107,26 +100,41 @@ export const scoreConfigsRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input, ctx }) => {
-      throwIfNoAccess({
+      throwIfNoProjectAccess({
         session: ctx.session,
         projectId: input.projectId,
         scope: "scoreConfigs:CUD",
       });
 
-      try {
-        const config = await ctx.prisma.scoreConfig.update({
-          where: {
-            id: input.id,
-            projectId: input.projectId,
-          },
-          data: {
-            isArchived: input.isArchived,
-          },
-        });
-
-        return config;
-      } catch (error) {
-        console.log(error);
+      const existingConfig = await ctx.prisma.scoreConfig.findFirst({
+        where: {
+          id: input.id,
+          projectId: input.projectId,
+        },
+      });
+      if (!existingConfig) {
+        throw new Error("No score config with this id in this project.");
       }
+
+      const config = await ctx.prisma.scoreConfig.update({
+        where: {
+          id: input.id,
+          projectId: input.projectId,
+        },
+        data: {
+          isArchived: input.isArchived,
+        },
+      });
+
+      await auditLog({
+        session: ctx.session,
+        resourceType: "scoreConfig",
+        resourceId: config.id,
+        action: "update",
+        before: existingConfig,
+        after: config,
+      });
+
+      return validateDbScoreConfig(config);
     }),
 });

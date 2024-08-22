@@ -1,5 +1,5 @@
 import {
-  type ModelUsageUnit,
+  type ModelUsageUnit as PrismaModelUsageUnit,
   paginationMetaResponseZod,
   paginationZod,
   type Model as PrismaModel,
@@ -11,20 +11,31 @@ import { z } from "zod";
  * Objects
  */
 
-const ModelDefinition = z.object({
-  id: z.string(),
-  modelName: z.string(),
-  matchPattern: z.string(),
-  startDate: z.coerce.date().nullable(),
-  inputPrice: z.number().nonnegative().nullable(),
-  outputPrice: z.number().nonnegative().nullable(),
-  totalPrice: z.number().nonnegative().nullable(),
-  unit: z.enum(["TOKENS", "CHARACTERS", "MILLISECONDS", "SECONDS", "IMAGES"]),
-  tokenizerId: z.string().nullable(),
-  tokenizerConfig: z.any(), // Assuming Prisma.JsonValue is any type
-  isLangfuseManaged: z.boolean(),
-  createdAt: z.coerce.date(),
-});
+const APIModelUsageUnit = z.enum([
+  "TOKENS",
+  "CHARACTERS",
+  "MILLISECONDS",
+  "SECONDS",
+  "REQUESTS",
+  "IMAGES",
+]);
+
+const APIModelDefinition = z
+  .object({
+    id: z.string(),
+    modelName: z.string(),
+    matchPattern: z.string(),
+    startDate: z.coerce.date().nullable(),
+    inputPrice: z.number().nonnegative().nullable(),
+    outputPrice: z.number().nonnegative().nullable(),
+    totalPrice: z.number().nonnegative().nullable(),
+    unit: APIModelUsageUnit,
+    tokenizerId: z.string().nullable(),
+    tokenizerConfig: z.any(), // Assuming Prisma.JsonValue is any type
+    isLangfuseManaged: z.boolean(),
+    createdAt: z.coerce.date(),
+  })
+  .strict();
 
 /**
  * Transforms
@@ -39,10 +50,10 @@ export function prismaToApiModelDefinition({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   updatedAt,
   ...model
-}: PrismaModel): z.infer<typeof ModelDefinition> {
+}: PrismaModel): z.infer<typeof APIModelDefinition> {
   return {
     ...model,
-    unit: unit as ModelUsageUnit,
+    unit: unit as PrismaModelUsageUnit,
     inputPrice: inputPrice?.toNumber() ?? null,
     outputPrice: outputPrice?.toNumber() ?? null,
     totalPrice: totalPrice?.toNumber() ?? null,
@@ -58,10 +69,12 @@ export function prismaToApiModelDefinition({
 export const GetModelsV1Query = z.object({
   ...paginationZod,
 });
-export const GetModelsV1Response = z.object({
-  data: z.array(ModelDefinition),
-  meta: paginationMetaResponseZod,
-});
+export const GetModelsV1Response = z
+  .object({
+    data: z.array(APIModelDefinition),
+    meta: paginationMetaResponseZod,
+  })
+  .strict();
 
 // POST /models
 export const PostModelsV1Body = z
@@ -72,7 +85,7 @@ export const PostModelsV1Body = z
     inputPrice: z.number().nonnegative().nullish(),
     outputPrice: z.number().nonnegative().nullish(),
     totalPrice: z.number().nonnegative().nullish(),
-    unit: z.enum(["TOKENS", "CHARACTERS", "MILLISECONDS", "SECONDS", "IMAGES"]),
+    unit: APIModelUsageUnit,
     tokenizerId: z.enum(["openai", "claude"]).nullish(),
     tokenizerConfig: jsonSchema.nullish(), // Assuming Prisma.JsonValue is any type
   })
@@ -88,18 +101,20 @@ export const PostModelsV1Body = z
       message: "If input and/or output price is set, total price must be null",
     },
   );
-export const PostModelsV1Response = ModelDefinition;
+export const PostModelsV1Response = APIModelDefinition.strict();
 
 // GET /models/{modelId}
 export const GetModelV1Query = z.object({
   modelId: z.string(),
 });
-export const GetModelV1Response = ModelDefinition;
+export const GetModelV1Response = APIModelDefinition.strict();
 
 // DELETE /models/{modelId}
 export const DeleteModelV1Query = z.object({
   modelId: z.string(),
 });
-export const DeleteModelV1Response = z.object({
-  message: z.literal("Model successfully deleted"),
-});
+export const DeleteModelV1Response = z
+  .object({
+    message: z.literal("Model successfully deleted"),
+  })
+  .strict();

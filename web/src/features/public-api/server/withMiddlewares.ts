@@ -1,11 +1,11 @@
 import { isPrismaException } from "@/src/utils/exceptions";
 import { cors, runMiddleware } from "@/src/features/public-api/server/cors";
 import { type NextApiRequest, type NextApiResponse } from "next";
-import { z } from "zod";
+import { type ZodError } from "zod";
 import { BaseError, MethodNotAllowedError } from "@langfuse/shared";
-import * as Sentry from "@sentry/node";
+import { traceException } from "@langfuse/shared/src/server";
 
-const httpMethods = ["GET", "POST", "PUT", "DELETE"] as const;
+const httpMethods = ["GET", "POST", "PUT", "DELETE", "PATCH"] as const;
 export type HttpMethod = (typeof httpMethods)[number];
 type Handlers = {
   [Method in HttpMethod]?: (
@@ -32,6 +32,7 @@ export function withMiddlewares(handlers: Handlers) {
           POST: defaultHandler,
           PUT: defaultHandler,
           DELETE: defaultHandler,
+          PATCH: defaultHandler,
         },
         ...handlers,
       };
@@ -40,9 +41,10 @@ export function withMiddlewares(handlers: Handlers) {
     } catch (error) {
       console.error(error);
 
-      Sentry.captureException(error);
-
       if (error instanceof BaseError) {
+        if (error.httpCode >= 500 && error.httpCode < 600) {
+          traceException(error);
+        }
         return res.status(error.httpCode).json({
           message: error.message,
           error: error.name,
@@ -50,19 +52,22 @@ export function withMiddlewares(handlers: Handlers) {
       }
 
       if (isPrismaException(error)) {
+        traceException(error);
         return res.status(500).json({
           message: "Internal Server Error",
           error: "An unknown error occurred",
         });
       }
 
-      if (error instanceof z.ZodError) {
+      // Instanceof check fails here as shared package zod has different instances
+      if (isZodError(error)) {
         return res.status(400).json({
           message: "Invalid request data",
           error: error.errors,
         });
       }
 
+      traceException(error);
       return res.status(500).json({
         message: "Internal Server Error",
         error:
@@ -70,4 +75,8 @@ export function withMiddlewares(handlers: Handlers) {
       });
     }
   };
+}
+
+export function isZodError(error: any): error is ZodError {
+  return error instanceof Object && error.constructor.name === "ZodError";
 }

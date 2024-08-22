@@ -30,7 +30,7 @@ import {
 } from "@/src/components/ui/select";
 import { Switch } from "@/src/components/ui/switch";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
-import { useHasAccess } from "@/src/features/rbac/utils/checkAccess";
+import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import { api } from "@/src/utils/api";
 import { cn } from "@/src/utils/tailwind";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -40,7 +40,9 @@ import useProjectIdFromURL from "@/src/hooks/useProjectIdFromURL";
 const formSchema = z
   .object({
     secretKey: z.string().min(1),
-    provider: z.string().min(1),
+    provider: z
+      .string()
+      .min(1, "Please add a provider name that identifies this connection."),
     adapter: z.nativeEnum(LLMAdapter),
     baseURL: z.union([z.literal(""), z.string().url()]),
     withDefaultModels: z.boolean(),
@@ -52,12 +54,16 @@ const formSchema = z
     path: ["withDefaultModels"],
   });
 
-export function CreateLLMApiKeyDialog() {
+export function CreateLLMApiKeyDialog({
+  evalModelsOnly,
+}: {
+  evalModelsOnly?: boolean;
+}) {
   const projectId = useProjectIdFromURL();
   const capture = usePostHogClientCapture();
   const utils = api.useUtils();
   const [open, setOpen] = useState(false);
-  const hasAccess = useHasAccess({
+  const hasAccess = useHasProjectAccess({
     projectId,
     scope: "llmApiKeys:create",
   });
@@ -214,11 +220,16 @@ export function CreateLLMApiKeyDialog() {
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {Object.values(LLMAdapter).map((provider) => (
-                        <SelectItem value={provider} key={provider}>
-                          {provider}
-                        </SelectItem>
-                      ))}
+                      {Object.values(LLMAdapter)
+                        .filter(
+                          (provider) =>
+                            !evalModelsOnly || provider === LLMAdapter.OpenAI,
+                        )
+                        .map((provider) => (
+                          <SelectItem value={provider} key={provider}>
+                            {provider}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                   <FormMessage />
@@ -240,8 +251,8 @@ export function CreateLLMApiKeyDialog() {
 
                   {currentAdapter === LLMAdapter.Azure && (
                     <FormDescription className="text-yellow-700">
-                      For Azure, please add the base URL in the following
-                      format:
+                      Please add the base URL in the following format (or
+                      compatible API):
                       https://&#123;instanceName&#125;.openai.azure.com/openai/deployments
                     </FormDescription>
                   )}

@@ -1,23 +1,48 @@
 import { z } from "zod";
 
-import {
-  createTRPCRouter,
-  protectedProjectProcedure,
-} from "@/src/server/api/trpc";
-import { throwIfNoAccess } from "@/src/features/rbac/utils/checkAccess";
-import { type ProjectRole, Prisma, type Score } from "@langfuse/shared/src/db";
-import { paginationZod } from "@langfuse/shared";
-import { ScoreDataType, singleFilter } from "@langfuse/shared";
-import {
-  tableColumnsToSqlFilterAndPrefix,
-  orderByToPrismaSql,
-} from "@langfuse/shared";
+import { throwIfNoProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import {
   type ScoreOptions,
   scoresTableCols,
 } from "@/src/server/api/definitions/scoresTable";
-import { orderBy } from "@langfuse/shared";
 import { auditLog } from "@/src/features/audit-logs/auditLog";
+import { composeAggregateScoreKey } from "@/src/features/scores/lib/aggregateScores";
+import {
+  DASHBOARD_AGGREGATION_OPTIONS,
+  DEFAULT_AGGREGATION_SELECTION,
+  TABLE_RANGE_DROPDOWN_OPTIONS,
+  dashboardDateRangeAggregationSettings,
+} from "@/src/utils/date-range-utils";
+import { addMinutes } from "date-fns";
+import {
+  createTRPCRouter,
+  protectedProjectProcedure,
+} from "@/src/server/api/trpc";
+import { tableDateRangeAggregationSettings } from "@/src/utils/date-range-utils";
+import {
+  CreateAnnotationScoreData,
+  orderBy,
+  orderByToPrismaSql,
+  paginationZod,
+  singleFilter,
+  tableColumnsToSqlFilterAndPrefix,
+  UpdateAnnotationScoreData,
+  validateDbScore,
+} from "@langfuse/shared";
+import { Prisma, type Score } from "@langfuse/shared/src/db";
+
+const SelectedTimeOption = z
+  .discriminatedUnion("filterSource", [
+    z.object({
+      filterSource: z.literal("TABLE"),
+      option: z.enum(TABLE_RANGE_DROPDOWN_OPTIONS),
+    }),
+    z.object({
+      filterSource: z.literal("DASHBOARD"),
+      option: z.enum(DASHBOARD_AGGREGATION_OPTIONS),
+    }),
+  ])
+  .optional();
 
 const ScoreFilterOptions = z.object({
   projectId: z.string(), // Required for protectedProjectProcedure
@@ -28,6 +53,32 @@ const ScoreFilterOptions = z.object({
 const ScoreAllOptions = ScoreFilterOptions.extend({
   ...paginationZod,
 });
+
+const getDateFromOption = (
+  selectedTimeOption: z.infer<typeof SelectedTimeOption>,
+): Date | undefined => {
+  if (!selectedTimeOption) return undefined;
+
+  const { filterSource, option } = selectedTimeOption;
+  if (filterSource === "TABLE") {
+    const setting =
+      tableDateRangeAggregationSettings[
+        option as keyof typeof tableDateRangeAggregationSettings
+      ];
+
+    return option !== DEFAULT_AGGREGATION_SELECTION
+      ? addMinutes(new Date(), -setting)
+      : undefined;
+  } else if (filterSource === "DASHBOARD") {
+    const setting =
+      dashboardDateRangeAggregationSettings[
+        option as keyof typeof dashboardDateRangeAggregationSettings
+      ];
+
+    return addMinutes(new Date(), -setting.minutes);
+  }
+  return undefined;
+};
 
 export const scoresRouter = createTRPCRouter({
   all: protectedProjectProcedure
@@ -75,6 +126,7 @@ export const scoresRouter = createTRPCRouter({
           u.name AS "authorUserName"
           `,
           input.projectId,
+          ctx.session.orgId,
           filterCondition,
           orderByCondition,
           input.limit,
@@ -88,6 +140,7 @@ export const scoresRouter = createTRPCRouter({
         generateScoresQuery(
           Prisma.sql` count(*) AS "totalCount"`,
           input.projectId,
+          ctx.session.orgId,
           filterCondition,
           Prisma.empty,
           1, // limit
@@ -131,21 +184,9 @@ export const scoresRouter = createTRPCRouter({
       return res;
     }),
   createAnnotationScore: protectedProjectProcedure
-    .input(
-      z.object({
-        projectId: z.string(),
-        traceId: z.string(),
-        observationId: z.string().optional(),
-        name: z.string(),
-        value: z.number(),
-        stringValue: z.string().optional(),
-        comment: z.string().optional().nullable(),
-        configId: z.string().optional(),
-        dataType: z.nativeEnum(ScoreDataType),
-      }),
-    )
+    .input(CreateAnnotationScoreData)
     .mutation(async ({ input, ctx }) => {
-      throwIfNoAccess({
+      throwIfNoProjectAccess({
         session: ctx.session,
         projectId: input.projectId,
         scope: "scores:CUD",
@@ -161,78 +202,69 @@ export const scoresRouter = createTRPCRouter({
         throw new Error("No trace with this id in this project.");
       }
 
-      try {
-        const existingScore = await ctx.prisma.score.findFirst({
+      const existingScore = await ctx.prisma.score.findFirst({
+        where: {
+          projectId: input.projectId,
+          traceId: input.traceId,
+          observationId: input.observationId ?? null,
+          source: "ANNOTATION",
+          configId: input.configId,
+        },
+      });
+
+      if (existingScore) {
+        const updatedScore = await ctx.prisma.score.update({
           where: {
+            id: existingScore.id,
             projectId: input.projectId,
-            traceId: input.traceId,
-            observationId: input.observationId,
-            source: "ANNOTATION",
-            configId: input.configId,
           },
-        });
-
-        if (existingScore) {
-          return ctx.prisma.score.update({
-            where: {
-              id: existingScore.id,
-              projectId: input.projectId,
-            },
-            data: {
-              value: input.value,
-              stringValue: input.stringValue,
-              comment: input.comment,
-              authorUserId: ctx.session.user.id,
-            },
-          });
-        }
-
-        const score = await ctx.prisma.score.create({
           data: {
-            projectId: input.projectId,
-            traceId: input.traceId,
-            observationId: input.observationId,
             value: input.value,
             stringValue: input.stringValue,
-            dataType: input.dataType,
-            configId: input.configId,
-            name: input.name,
             comment: input.comment,
             authorUserId: ctx.session.user.id,
-            source: "ANNOTATION",
           },
         });
         await auditLog({
-          projectId: input.projectId,
-          userId: ctx.session.user.id,
-          userProjectRole: ctx.session.user.projects.find(
-            (p) => p.id === input.projectId,
-          )?.role as ProjectRole, // throwIfNoAccess ensures this is defined
+          session: ctx.session,
           resourceType: "score",
-          resourceId: score.id,
-          action: "create",
-          after: score,
+          resourceId: updatedScore.id,
+          action: "update",
+          before: existingScore,
+          after: updatedScore,
         });
-        return score;
-      } catch (error) {
-        console.log(error);
-        throw error;
+        return validateDbScore(updatedScore);
       }
+
+      const score = await ctx.prisma.score.create({
+        data: {
+          projectId: input.projectId,
+          traceId: input.traceId,
+          observationId: input.observationId,
+          value: input.value,
+          stringValue: input.stringValue,
+          dataType: input.dataType,
+          configId: input.configId,
+          name: input.name,
+          comment: input.comment,
+          authorUserId: ctx.session.user.id,
+          source: "ANNOTATION",
+        },
+      });
+
+      await auditLog({
+        session: ctx.session,
+        resourceType: "score",
+        resourceId: score.id,
+        action: "create",
+        after: score,
+      });
+      return validateDbScore(score);
     }),
   updateAnnotationScore: protectedProjectProcedure
-    .input(
-      z.object({
-        projectId: z.string(),
-        id: z.string(),
-        value: z.number(),
-        stringValue: z.string().optional(),
-        comment: z.string().optional().nullable(),
-        configId: z.string().optional(),
-        dataType: z.nativeEnum(ScoreDataType),
-      }),
-    )
+    .input(UpdateAnnotationScoreData)
     .mutation(async ({ input, ctx }) => {
-      throwIfNoAccess({
+      throwIfNoProjectAccess({
         session: ctx.session,
         projectId: input.projectId,
         scope: "scores:CUD",
@@ -247,41 +279,34 @@ export const scoresRouter = createTRPCRouter({
       if (!score) {
         throw new Error("No annotation score with this id in this project.");
       }
-
-      try {
-        await auditLog({
+      const updatedScore = await ctx.prisma.score.update({
+        where: {
+          id: score.id,
           projectId: input.projectId,
-          userId: ctx.session.user.id,
-          userProjectRole: ctx.session.user.projects.find(
-            (p) => p.id === input.projectId,
-          )?.role as ProjectRole, // throwIfNoAccess ensures this is defined
-          resourceType: "score",
-          resourceId: score.id,
-          action: "update",
-          after: score,
-        });
+        },
+        data: {
+          value: input.value,
+          stringValue: input.stringValue,
+          comment: input.comment,
+          authorUserId: ctx.session.user.id,
+        },
+      });
 
-        return ctx.prisma.score.update({
-          where: {
-            id: score.id,
-            projectId: input.projectId,
-          },
-          data: {
-            value: input.value,
-            stringValue: input.stringValue,
-            comment: input.comment,
-            authorUserId: ctx.session.user.id,
-          },
-        });
-      } catch (error) {
-        console.log(error);
-        throw error;
-      }
+      await auditLog({
+        session: ctx.session,
+        resourceType: "score",
+        resourceId: score.id,
+        action: "update",
+        before: score,
+        after: updatedScore,
+      });
+
+      return validateDbScore(updatedScore);
     }),
   deleteAnnotationScore: protectedProjectProcedure
     .input(z.object({ projectId: z.string(), id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      throwIfNoAccess({
+      throwIfNoProjectAccess({
         session: ctx.session,
         projectId: input.projectId,
         scope: "scores:CUD",
@@ -299,29 +324,58 @@ export const scoresRouter = createTRPCRouter({
       }
 
       await auditLog({
-        projectId: input.projectId,
-        userId: ctx.session.user.id,
-        userProjectRole: ctx.session.user.projects.find(
-          (p) => p.id === input.projectId,
-        )?.role as ProjectRole, // throwIfNoAccess ensures this is defined
+        session: ctx.session,
         resourceType: "score",
         resourceId: score.id,
         action: "delete",
         before: score,
       });
 
-      return ctx.prisma.score.delete({
+      return await ctx.prisma.score.delete({
         where: {
           id: score.id,
           projectId: input.projectId,
         },
       });
     }),
+  getScoreKeysAndProps: protectedProjectProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        selectedTimeOption: SelectedTimeOption,
+      }),
+    )
+    .query(async ({ input, ctx }) => {
+      const date = getDateFromOption(input.selectedTimeOption);
+
+      const scores = await ctx.prisma.score.groupBy({
+        where: {
+          projectId: input.projectId,
+          ...(date ? { timestamp: { gte: date } } : {}),
+        },
+        take: 1000,
+        orderBy: {
+          _count: {
+            id: "desc",
+          },
+        },
+        by: ["name", "source", "dataType"],
+      });
+
+      if (scores.length === 0) return [];
+      return scores.map(({ name, source, dataType }) => ({
+        key: composeAggregateScoreKey({ name, source, dataType }),
+        name: name,
+        source: source,
+        dataType: dataType,
+      }));
+    }),
 });
 
 const generateScoresQuery = (
   select: Prisma.Sql,
   projectId: string,
+  orgId: string,
   filterCondition: Prisma.Sql,
   orderCondition: Prisma.Sql,
   limit: number,
@@ -333,7 +387,7 @@ const generateScoresQuery = (
   FROM scores s
   LEFT JOIN traces t ON t.id = s.trace_id AND t.project_id = ${projectId}
   LEFT JOIN job_executions je ON je.job_output_score_id = s.id AND je.project_id = ${projectId}
-  LEFT JOIN users u ON u.id = s.author_user_id
+  LEFT JOIN users u ON u.id = s.author_user_id AND u.id in (SELECT user_id FROM organization_memberships WHERE org_id = ${orgId})
   WHERE s.project_id = ${projectId}
   ${filterCondition}
   ${orderCondition}

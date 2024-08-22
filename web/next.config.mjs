@@ -31,7 +31,13 @@ const nextConfig = {
   reactStrictMode: true,
   experimental: {
     instrumentationHook: true,
+    serverComponentsExternalPackages: [
+      "dd-trace",
+      "@opentelemetry/auto-instrumentations-node",
+      "@opentelemetry/api",
+    ],
   },
+  poweredByHeader: false,
 
   /**
    * If you have `experimental: { appDir: true }` set, then you must comment the below `i18n` config
@@ -97,11 +103,25 @@ const nextConfig = {
             },
           ]
         : []),
+      // all files in /public/generated are public and can be accessed from any origin, e.g. to render an API reference based on our openapi schema
+      {
+        source: "/generated/:path*",
+        headers: [
+          {
+            key: "Access-Control-Allow-Origin",
+            value: "*",
+          },
+          {
+            key: "Access-Control-Allow-Methods",
+            value: "GET",
+          },
+        ],
+      },
     ];
   },
 
   // webassembly support for @dqbd/tiktoken
-  webpack(config) {
+  webpack(config, { isServer }) {
     config.experiments = {
       asyncWebAssembly: true,
       layers: true,

@@ -1,11 +1,13 @@
 import { Queue, Worker } from "bullmq";
 
-import { redis } from "../redis";
+import { redis, QueueJobs, QueueName } from "@langfuse/shared/src/server";
 import { enqueueBatchExportJobs } from "../features/batchExport/enqueueBatchExportJobs";
-import { QueueJobs, QueueName } from "@langfuse/shared";
 
 export const repeatQueue = redis
-  ? new Queue(QueueName.RepeatQueue, { connection: redis })
+  ? new Queue(QueueName.RepeatQueue, {
+      connection: redis,
+      defaultJobOptions: { removeOnComplete: true, removeOnFail: true },
+    })
   : null;
 
 if (repeatQueue) {

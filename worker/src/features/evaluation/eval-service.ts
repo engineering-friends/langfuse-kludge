@@ -2,23 +2,24 @@ import { randomUUID } from "crypto";
 import Handlebars from "handlebars";
 import { sql } from "kysely";
 import { z } from "zod";
-
+import {
+  QueueJobs,
+  QueueName,
+  EvalExecutionEvent,
+  TraceUpsertEventSchema,
+} from "@langfuse/shared/src/server";
 import {
   ApiError,
   availableEvalVariables,
   ChatMessageRole,
-  EvalExecutionEvent,
   evalTableCols,
   fetchLLMCompletion,
   ForbiddenError,
   LangfuseNotFoundError,
   LLMApiKeySchema,
   Prisma,
-  QueueJobs,
-  QueueName,
   singleFilter,
   tableColumnsToSqlFilterAndPrefix,
-  TraceUpsertEventSchema,
   InvalidRequestError,
   variableMappingList,
   ZodModelConfig,
@@ -47,7 +48,9 @@ export const createEvalJobs = async ({
     logger.debug("No evaluation jobs found for project", event.projectId);
     return;
   }
-  logger.info("Creating eval jobs for trace", event.traceId);
+  logger.info(
+    `Creating eval jobs for trace ${event.traceId} on project ${event.projectId}`
+  );
 
   for (const config of configs) {
     if (config.status === "INACTIVE") {
@@ -98,21 +101,33 @@ export const createEvalJobs = async ({
         continue;
       }
 
+      // apply sampling. Only if the job is sampled, we create a job
+      // user supplies a number between 0 and 1, which is the probability of sampling
+
+      if (parseFloat(config.sampling) !== 1) {
+        const random = Math.random();
+        if (random > parseFloat(config.sampling)) {
+          logger.info(
+            `Eval job for config ${config.id} and trace ${event.traceId} was sampled out`
+          );
+          continue;
+        }
+      }
+
       logger.info(
         `Creating eval job for config ${config.id} and trace ${event.traceId}`
       );
 
-      await kyselyPrisma.$kysely
-        .insertInto("job_executions")
-        .values({
+      await prisma.jobExecution.create({
+        data: {
           id: jobExecutionId,
-          project_id: event.projectId,
-          job_configuration_id: config.id,
-          job_input_trace_id: event.traceId,
-          status: sql`'PENDING'::"JobExecutionStatus"`,
-          start_time: new Date(),
-        })
-        .execute();
+          projectId: event.projectId,
+          jobConfigurationId: config.id,
+          jobInputTraceId: event.traceId,
+          status: "PENDING",
+          startTime: new Date(),
+        },
+      });
 
       // add the job to the next queue so that eval can be executed
       evalQueue?.add(
@@ -134,13 +149,13 @@ export const createEvalJobs = async ({
           },
           delay: config.delay, // milliseconds
           removeOnComplete: true,
-          removeOnFail: 10_000,
+          removeOnFail: 1_000,
         }
       );
     } else {
       // if we do not have a match, and execution exists, we mark the job as cancelled
       // we do this, because a second trace event might 'deselect' a trace
-      logger.debug(`Eval job for config ${config.id} did not match trace`);
+      logger.info(`Eval job for config ${config.id} did not match trace`);
       if (existingJob.length > 0) {
         logger.info(
           `Cancelling eval job for config ${config.id} and trace ${event.traceId}`
@@ -231,7 +246,9 @@ export const evaluate = async ({
     ),
   });
 
-  logger.info(`Compiled prompt ${prompt}`);
+  logger.info(
+    `Evaluating job ${event.jobExecutionId} compiled prompt ${prompt}`
+  );
 
   const parsedOutputSchema = z
     .object({
@@ -262,6 +279,9 @@ export const evaluate = async ({
 
   if (!parsedKey.success) {
     // this will fail the eval execution if a user deletes the API key.
+    logger.error(
+      `Evaluating job ${event.jobExecutionId} did not find API key for provider ${template.provider} and project ${event.projectId}. Eval will fail. ${parsedKey.error}`
+    );
     throw new LangfuseNotFoundError(
       `API key for provider ${template.provider} and project ${event.projectId} not found.`
     );

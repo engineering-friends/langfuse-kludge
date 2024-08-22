@@ -1,37 +1,38 @@
-import { nodeProfilingIntegration } from "@sentry/profiling-node";
-import { env } from "./env";
-import * as Sentry from "@sentry/node";
+import tracer from "dd-trace";
+import { registerInstrumentations } from "@opentelemetry/instrumentation";
+import { IORedisInstrumentation } from "@opentelemetry/instrumentation-ioredis";
+import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
+import { ExpressInstrumentation } from "@opentelemetry/instrumentation-express";
+import { PinoInstrumentation } from "@opentelemetry/instrumentation-pino";
+import { PrismaInstrumentation } from "@prisma/instrumentation";
+import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+import { AsyncHooksContextManager } from "@opentelemetry/context-async-hooks";
+import opentelemetry from "@opentelemetry/api";
+import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
+// import { BullMQInstrumentation } from "@appsignal/opentelemetry-instrumentation-bullmq";
 
-Sentry.init({
-  dsn: String(env.SENTRY_DSN),
-  integrations: [
-    Sentry.httpIntegration(),
-    Sentry.expressIntegration(),
-    nodeProfilingIntegration(),
-    Sentry.redisIntegration(),
-    Sentry.prismaIntegration(),
-  ],
+const contextManager = new AsyncHooksContextManager().enable();
 
-  // Add Tracing by setting tracesSampleRate
-  // We recommend adjusting this value in production
-  tracesSampleRate: 0.5,
+opentelemetry.context.setGlobalContextManager(contextManager);
 
-  // Set sampling rate for profiling
-  // This is relative to tracesSampleRate
-  profilesSampleRate: 0.1,
+const { TracerProvider } = tracer.init({
+  profiling: false,
+  runtimeMetrics: true,
 });
 
-type CallbackAsyncFn<T> = (span?: Sentry.Span) => Promise<T>;
+const provider = new TracerProvider();
 
-export async function instrumentAsync<T>(
-  ctx: { name: string },
-  callback: CallbackAsyncFn<T>
-): Promise<T> {
-  if (env.SENTRY_DSN) {
-    return Sentry.startSpan(ctx, async (span) => {
-      return callback(span);
-    });
-  } else {
-    return callback();
-  }
-}
+registerInstrumentations({
+  instrumentations: [
+    new IORedisInstrumentation(),
+    new HttpInstrumentation(),
+    new ExpressInstrumentation(),
+    new PrismaInstrumentation(),
+    getNodeAutoInstrumentations(),
+    new PinoInstrumentation(),
+    new UndiciInstrumentation(),
+    // new BullMQInstrumentation(),
+  ],
+});
+
+provider.register();

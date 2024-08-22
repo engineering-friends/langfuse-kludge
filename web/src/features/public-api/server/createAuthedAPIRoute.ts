@@ -1,10 +1,12 @@
 import { type NextApiRequest, type NextApiResponse } from "next";
-import { type ZodType, ZodObject, type z } from "zod";
-import * as Sentry from "@sentry/node";
+import { type ZodType, type z } from "zod";
+import { ApiAuthService } from "@/src/features/public-api/server/apiAuth";
+import { prisma } from "@langfuse/shared/src/db";
 import {
-  verifyAuthHeaderAndReturnScope,
+  redis,
   type AuthHeaderValidVerificationResult,
-} from "@/src/features/public-api/server/apiAuth";
+  traceException,
+} from "@langfuse/shared/src/server";
 
 type RouteConfig<
   TQuery extends ZodType<any>,
@@ -33,9 +35,10 @@ export const createAuthedAPIRoute = <
   routeConfig: RouteConfig<TQuery, TBody, TResponse>,
 ): ((req: NextApiRequest, res: NextApiResponse) => Promise<void>) => {
   return async (req: NextApiRequest, res: NextApiResponse) => {
-    const auth = await verifyAuthHeaderAndReturnScope(
-      req.headers.authorization,
-    );
+    const auth = await new ApiAuthService(
+      prisma,
+      redis,
+    ).verifyAuthHeaderAndReturnScope(req.headers.authorization);
     if (!auth.validKey) {
       res.status(401).json({ message: auth.error });
       return;
@@ -74,17 +77,10 @@ export const createAuthedAPIRoute = <
     });
 
     if (routeConfig.responseSchema) {
-      try {
-        // If the response schema is an object, we need to call strict() to ensure that the response object doesn't have any extra keys
-        const responseSchema = routeConfig.responseSchema;
-        if (responseSchema instanceof ZodObject) {
-          responseSchema.strict().parse(response);
-        } else {
-          responseSchema.parse(response);
-        }
-      } catch (error: unknown) {
-        console.error("Response validation failed:", error);
-        Sentry.captureException(error);
+      const parsingResult = routeConfig.responseSchema.safeParse(response);
+      if (!parsingResult.success) {
+        console.error("Response validation failed:", parsingResult.error);
+        traceException(parsingResult.error);
       }
     }
 

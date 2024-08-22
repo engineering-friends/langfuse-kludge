@@ -1,32 +1,24 @@
-import { Job, Queue, Worker } from "bullmq";
+import { Job, Worker } from "bullmq";
 
-import {
-  BaseError,
-  BatchExportStatus,
-  QueueName,
-  TQueueJobTypes,
-} from "@langfuse/shared";
+import { BaseError, BatchExportStatus } from "@langfuse/shared";
 import { kyselyPrisma } from "@langfuse/shared/src/db";
-import * as Sentry from "@sentry/node";
 
-import { instrumentAsync } from "../instrumentation";
+import { traceException, instrument } from "@langfuse/shared/src/server";
 import logger from "../logger";
-import { redis } from "../redis";
+import { redis, QueueName, TQueueJobTypes } from "@langfuse/shared/src/server";
 import { handleBatchExportJob } from "../features/batchExport/handleBatchExportJob";
-
-export const batchExportQueue = redis
-  ? new Queue<TQueueJobTypes[QueueName.BatchExport]>(QueueName.BatchExport, {
-      connection: redis,
-    })
-  : null;
+import { SpanKind } from "@opentelemetry/api";
 
 export const batchExportJobExecutor = redis
   ? new Worker<TQueueJobTypes[QueueName.BatchExport]>(
       QueueName.BatchExport,
       async (job: Job<TQueueJobTypes[QueueName.BatchExport]>) => {
-        return instrumentAsync(
-          { name: "batchExportJobExecutor" },
-          async (span) => {
+        return instrument(
+          {
+            name: "batchExportJobExecutor",
+            spanKind: SpanKind.CONSUMER,
+          },
+          async () => {
             try {
               logger.info("Executing Batch Export Job", job.data.payload);
               await handleBatchExportJob(job.data.payload);
@@ -53,11 +45,8 @@ export const batchExportJobExecutor = redis
                 e,
                 `Failed Batch Export job for id ${job.data.payload.batchExportId} ${e}`
               );
-              Sentry.captureException(e);
-
+              traceException(e);
               throw e;
-            } finally {
-              span?.end();
             }
           }
         );

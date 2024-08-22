@@ -1,6 +1,6 @@
 import { type NestedObservation } from "@/src/utils/types";
 import { cn } from "@/src/utils/tailwind";
-import { type Trace, type Score, type $Enums } from "@langfuse/shared";
+import { type APIScore, type Trace, type $Enums } from "@langfuse/shared";
 import { GroupedScoreBadges } from "@/src/components/grouped-score-badge";
 import { Fragment } from "react";
 import { type ObservationReturnType } from "@/src/server/api/routers/traces";
@@ -14,6 +14,7 @@ import {
   nestObservations,
   treeItemColors,
 } from "@/src/components/trace/lib/helpers";
+import { CommentCountIcon } from "@/src/features/comments/CommentCountIcon";
 
 export const ObservationTree = (props: {
   observations: ObservationReturnType[];
@@ -22,11 +23,13 @@ export const ObservationTree = (props: {
   collapseAll: () => void;
   expandAll: () => void;
   trace: Trace;
-  scores: Score[];
+  scores: APIScore[];
   currentObservationId: string | undefined;
   setCurrentObservationId: (id: string | undefined) => void;
   showMetrics: boolean;
   showScores: boolean;
+  observationCommentCounts?: Map<string, number>;
+  traceCommentCounts?: Map<string, number>;
   className?: string;
 }) => {
   const nestedObservations = nestObservations(props.observations);
@@ -37,6 +40,7 @@ export const ObservationTree = (props: {
         collapseAll={props.collapseAll}
         trace={props.trace}
         scores={props.scores}
+        comments={props.traceCommentCounts}
         currentObservationId={props.currentObservationId}
         setCurrentObservationId={props.setCurrentObservationId}
         showMetrics={props.showMetrics}
@@ -47,6 +51,7 @@ export const ObservationTree = (props: {
         collapsedObservations={props.collapsedObservations}
         toggleCollapsedObservation={props.toggleCollapsedObservation}
         scores={props.scores}
+        comments={props.observationCommentCounts}
         indentationLevel={1}
         currentObservationId={props.currentObservationId}
         setCurrentObservationId={props.setCurrentObservationId}
@@ -61,7 +66,8 @@ const ObservationTreeTraceNode = (props: {
   trace: Trace & { latency?: number };
   expandAll: () => void;
   collapseAll: () => void;
-  scores: Score[];
+  scores: APIScore[];
+  comments: Map<string, number> | undefined;
   currentObservationId: string | undefined;
   setCurrentObservationId: (id: string | undefined) => void;
   showMetrics?: boolean;
@@ -79,23 +85,28 @@ const ObservationTreeTraceNode = (props: {
   >
     <div className="flex gap-2">
       <span className={cn("rounded-sm bg-input p-1 text-xs")}>TRACE</span>
-      <span className="flex-1 break-all text-sm">{props.trace.name}</span>
-      <Button
-        onClick={(ev) => (ev.stopPropagation(), props.expandAll())}
-        size="xs"
-        variant="ghost"
-        title="Expand all"
-      >
-        <PlusCircleIcon className="h-4 w-4" />
-      </Button>
-      <Button
-        onClick={(ev) => (ev.stopPropagation(), props.collapseAll())}
-        size="xs"
-        variant="ghost"
-        title="Collapse all"
-      >
-        <MinusCircle className="h-4 w-4" />
-      </Button>
+      <span className="break-all text-sm">{props.trace.name}</span>
+      {props.comments ? (
+        <CommentCountIcon count={props.comments.get(props.trace.id)} />
+      ) : null}
+      <div className="flex flex-1 justify-end">
+        <Button
+          onClick={(ev) => (ev.stopPropagation(), props.expandAll())}
+          size="xs"
+          variant="ghost"
+          title="Expand all"
+        >
+          <PlusCircleIcon className="h-4 w-4" />
+        </Button>
+        <Button
+          onClick={(ev) => (ev.stopPropagation(), props.collapseAll())}
+          size="xs"
+          variant="ghost"
+          title="Collapse all"
+        >
+          <MinusCircle className="h-4 w-4" />
+        </Button>
+      </div>
     </div>
 
     {props.showMetrics && props.trace.latency ? (
@@ -119,7 +130,8 @@ const ObservationTreeNode = (props: {
   observations: NestedObservation[];
   collapsedObservations: string[];
   toggleCollapsedObservation: (id: string) => void;
-  scores: Score[];
+  scores: APIScore[];
+  comments?: Map<string, number> | undefined;
   indentationLevel: number;
   currentObservationId: string | undefined;
   setCurrentObservationId: (id: string | undefined) => void;
@@ -154,9 +166,16 @@ const ObservationTreeNode = (props: {
                     <ColorCodedObservationType
                       observationType={observation.type}
                     />
-                    <span className="flex-1 break-all text-sm">
-                      {observation.name}
-                    </span>
+                    <div className="grid flex-1 grid-cols-[auto,1fr] gap-2">
+                      <span className="break-all text-sm">
+                        {observation.name}
+                      </span>
+                      {props.comments ? (
+                        <CommentCountIcon
+                          count={props.comments.get(observation.id)}
+                        />
+                      ) : null}
+                    </div>
                     {observation.children.length === 0 ? null : (
                       <Toggle
                         onClick={(ev) => (
@@ -244,6 +263,7 @@ const ObservationTreeNode = (props: {
                   collapsedObservations={props.collapsedObservations}
                   toggleCollapsedObservation={props.toggleCollapsedObservation}
                   scores={props.scores}
+                  comments={props.comments}
                   indentationLevel={props.indentationLevel + 1}
                   currentObservationId={props.currentObservationId}
                   setCurrentObservationId={props.setCurrentObservationId}

@@ -17,7 +17,7 @@ import { api } from "@/src/utils/api";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { extractVariables, getIsCharOrUnderscore } from "@/src/utils/string";
 import router from "next/router";
-import { type EvalTemplate } from "@prisma/client";
+import { type EvalTemplate } from "@langfuse/shared";
 import { ModelParameters } from "@/src/components/ModelParameters";
 import {
   OutputSchema,
@@ -70,11 +70,13 @@ export const EvalTemplateForm = (props: {
               />
             </SelectTrigger>
             <SelectContent className="max-h-60 max-w-80">
-              {TEMPLATES.map((project) => (
-                <SelectItem key={project.name} value={project.name}>
-                  {project.name}
-                </SelectItem>
-              ))}
+              {TEMPLATES.sort((a, b) => a.name.localeCompare(b.name)).map(
+                (project) => (
+                  <SelectItem key={project.name} value={project.name}>
+                    {project.name}
+                  </SelectItem>
+                ),
+              )}
             </SelectContent>
           </Select>
         </div>

@@ -14,8 +14,14 @@ import { v4 } from "uuid";
 import { ModelUsageUnit } from "../src";
 import { getDisplaySecretKey, hashSecretKey } from "../src/server";
 import { encrypt } from "../src/encryption";
+import { redis } from "../src/server/redis/redis";
 
 const LOAD_TRACE_VOLUME = 10_000;
+
+type ConfigCategory = {
+  label: string;
+  value: number;
+};
 
 const options = {
   environment: { type: "string" },
@@ -28,38 +34,110 @@ async function main() {
     options,
   }).values.environment;
 
+  const seedOrgId = "seed-org-id";
+  const seedProjectId = "7a88fb47-b4e2-43b8-a06c-a5ce950dc53a";
+  const seedUserId1 = "user-1"; // Owner of org
+  const seedUserId2 = "user-2"; // Member of org, admin of project
+
   const user = await prisma.user.upsert({
-    where: { id: "user-1" },
+    where: { id: seedUserId1 },
     update: {
       name: "Demo User",
       email: "demo@langfuse.com",
       password: await hash("password", 12),
     },
     create: {
-      id: "user-1",
+      id: seedUserId1,
       name: "Demo User",
       email: "demo@langfuse.com",
       password: await hash("password", 12),
       image: "https://static.langfuse.com/langfuse-dev%2Fexample-avatar.png",
     },
   });
+  const user2 = await prisma.user.upsert({
+    where: { id: seedUserId2 },
+    update: {
+      name: "Demo User 2",
+      email: "member@langfuse.com",
+      password: await hash("password", 12),
+    },
+    create: {
+      id: seedUserId2,
+      name: "Demo User 2",
+      email: "member@langfuse.com",
+      password: await hash("password", 12),
+    },
+  });
 
-  const seedProjectId = "7a88fb47-b4e2-43b8-a06c-a5ce950dc53a";
+  await prisma.organization.upsert({
+    where: { id: seedOrgId },
+    update: {
+      name: "Seed Org",
+    },
+    create: {
+      id: seedOrgId,
+      name: "Seed Org",
+    },
+  });
 
   const project1 = await prisma.project.upsert({
     where: { id: seedProjectId },
     update: {
       name: "llm-app",
+      orgId: seedOrgId,
     },
     create: {
       id: seedProjectId,
       name: "llm-app",
-      projectMembers: {
-        create: {
-          role: "OWNER",
-          userId: user.id,
-        },
+      orgId: seedOrgId,
+    },
+  });
+
+  const orgMembership = await prisma.organizationMembership.upsert({
+    where: {
+      orgId_userId: {
+        userId: user.id,
+        orgId: seedOrgId,
       },
+    },
+    create: {
+      userId: user.id,
+      orgId: seedOrgId,
+      role: "OWNER",
+    },
+    update: {},
+  });
+
+  const orgMembership2 = await prisma.organizationMembership.upsert({
+    where: {
+      orgId_userId: {
+        userId: user2.id,
+        orgId: seedOrgId,
+      },
+    },
+    create: {
+      userId: user2.id,
+      orgId: seedOrgId,
+      role: "MEMBER",
+    },
+    update: {},
+  });
+
+  const projectMembership = await prisma.projectMembership.upsert({
+    where: {
+      projectId_userId: {
+        projectId: project1.id,
+        userId: user2.id,
+      },
+    },
+    create: {
+      userId: user2.id,
+      projectId: project1.id,
+      role: "ADMIN",
+      orgMembershipId: orgMembership2.id,
+    },
+    update: {
+      orgMembershipId: orgMembership2.id,
     },
   });
 
@@ -108,17 +186,38 @@ async function main() {
 
   // Do not run the following for local docker compose setup
   if (environment === "examples" || environment === "load") {
-    const project2 = await prisma.project.upsert({
-      where: { id: "239ad00f-562f-411d-af14-831c75ddd875" },
+    const seedOrgIdOrg2 = "demo-org-id";
+    const project2Id = "239ad00f-562f-411d-af14-831c75ddd875";
+    const org2 = await prisma.organization.upsert({
+      where: { id: seedOrgIdOrg2 },
+      update: {
+        name: "Langfuse Demo",
+      },
       create: {
-        id: "239ad00f-562f-411d-af14-831c75ddd875",
+        id: seedOrgIdOrg2,
+        name: "Langfuse Demo",
+      },
+    });
+    const project2 = await prisma.project.upsert({
+      where: { id: project2Id },
+      create: {
+        id: project2Id,
         name: "demo-app",
-        projectMembers: {
-          create: {
-            role: "OWNER",
-            userId: user.id,
-          },
+        orgId: org2.id,
+      },
+      update: { orgId: seedOrgIdOrg2 },
+    });
+    await prisma.organizationMembership.upsert({
+      where: {
+        orgId_userId: {
+          userId: user.id,
+          orgId: seedOrgIdOrg2,
         },
+      },
+      create: {
+        userId: user.id,
+        orgId: seedOrgIdOrg2,
+        role: "VIEWER",
       },
       update: {},
     });
@@ -158,21 +257,29 @@ async function main() {
 
     const traceVolume = environment === "load" ? LOAD_TRACE_VOLUME : 100;
 
-    const { traces, observations, scores, sessions, events } = createObjects(
-      traceVolume,
-      envTags,
-      colorTags,
-      project1,
-      project2,
-      promptIds,
-      configIdsAndNames
-    );
+    const { traces, observations, scores, sessions, events, comments } =
+      createObjects(
+        traceVolume,
+        envTags,
+        colorTags,
+        project1,
+        project2,
+        promptIds,
+        configIdsAndNames
+      );
 
     console.log(
       `Seeding ${traces.length} traces, ${observations.length} observations, and ${scores.length} scores`
     );
 
-    await uploadObjects(traces, observations, scores, sessions, events);
+    await uploadObjects(
+      traces,
+      observations,
+      scores,
+      sessions,
+      events,
+      comments
+    );
 
     // If openai key is in environment, add it to the projects LLM API keys
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -281,6 +388,7 @@ async function main() {
             : undefined;
         const datasetItem = await prisma.datasetItem.create({
           data: {
+            projectId: project2.id,
             datasetId: dataset.id,
             sourceTraceId: sourceObservation?.traceId,
             sourceObservationId:
@@ -307,6 +415,7 @@ async function main() {
       for (let datasetRunNumber = 0; datasetRunNumber < 5; datasetRunNumber++) {
         const datasetRun = await prisma.datasetRuns.create({
           data: {
+            projectId: project2.id,
             name: `demo-dataset-run-${datasetRunNumber}`,
             description: Math.random() > 0.5 ? "Dataset run description" : "",
             datasetId: dataset.id,
@@ -331,6 +440,7 @@ async function main() {
 
           await prisma.datasetRunItems.create({
             data: {
+              projectId: project2.id,
               datasetItemId,
               traceId: observation.traceId as string,
               observationId: Math.random() > 0.5 ? observation.id : undefined,
@@ -346,10 +456,14 @@ async function main() {
 main()
   .then(async () => {
     await prisma.$disconnect();
+    redis?.disconnect();
+    console.log("Disconnected from postgres and redis");
   })
   .catch(async (e) => {
     console.error(e);
     await prisma.$disconnect();
+    redis?.disconnect();
+    console.log("Disconnected from postgres and redis");
     process.exit(1);
   });
 
@@ -358,7 +472,8 @@ async function uploadObjects(
   observations: Prisma.ObservationCreateManyInput[],
   scores: Prisma.ScoreCreateManyInput[],
   sessions: Prisma.TraceSessionCreateManyInput[],
-  events: Prisma.ObservationCreateManyInput[]
+  events: Prisma.ObservationCreateManyInput[],
+  comments: Prisma.CommentCreateManyInput[]
 ) {
   let promises: Prisma.PrismaPromise<unknown>[] = [];
 
@@ -450,6 +565,22 @@ async function uploadObjects(
       );
     await promises[i];
   }
+
+  promises = [];
+  chunk(comments, chunkSize).forEach((chunk) => {
+    promises.push(
+      prisma.comment.createMany({
+        data: chunk,
+      })
+    );
+  });
+  for (let i = 0; i < promises.length; i++) {
+    if (i + 1 >= promises.length || i % Math.ceil(promises.length / 10) === 0)
+      console.log(
+        `Seeding of Comments ${((i + 1) / promises.length) * 100}% complete`
+      );
+    await promises[i];
+  }
 }
 
 function createObjects(
@@ -459,7 +590,15 @@ function createObjects(
   project1: Project,
   project2: Project,
   promptIds: Map<string, string[]>,
-  configIdsAndNames: Map<string, { name: string; id: string }[]>
+  configParams: Map<
+    string,
+    {
+      name: string;
+      id: string;
+      dataType: ScoreDataType;
+      categories: ConfigCategory[] | null;
+    }[]
+  >
 ) {
   const traces: Prisma.TraceCreateManyInput[] = [];
   const observations: Prisma.ObservationCreateManyInput[] = [];
@@ -467,6 +606,7 @@ function createObjects(
   const sessions: Prisma.TraceSessionCreateManyInput[] = [];
   const events: Prisma.ObservationCreateManyInput[] = [];
   const configs: Prisma.ScoreConfigCreateManyInput[] = [];
+  const comments: Prisma.CommentCreateManyInput[] = [];
 
   for (let i = 0; i < traceVolume; i++) {
     // print progress to console with a progress bar that refreshes every 10 iterations
@@ -497,6 +637,7 @@ function createObjects(
     const trace = {
       id: `trace-${v4()}`,
       timestamp: traceTs,
+      createdAt: traceTs,
       projectId: projectId,
       name: ["generate-outreach", "label-inbound", "draft-response"][
         i % 3
@@ -518,13 +659,34 @@ function createObjects(
 
     traces.push(trace);
 
-    const configArray = configIdsAndNames.get(projectId) ?? [];
+    const configArray = configParams.get(projectId) ?? [];
     const randomIndex = Math.floor(Math.random() * 3);
     const config =
       configArray.length >= randomIndex - 1 && configArray[randomIndex];
-    const { name: annotationScoreName, id: configId } = config || {
+    const {
+      name: annotationScoreName,
+      id: configId,
+      dataType,
+      categories,
+    } = config || {
       name: "manual-score",
       id: undefined,
+      dataType: ScoreDataType.NUMERIC,
+      categories: null,
+    };
+
+    const value = Math.floor(Math.random() * 2);
+    const scoreNumericAndStringValue = {
+      ...(dataType === ScoreDataType.NUMERIC && { value }),
+      ...(dataType === ScoreDataType.CATEGORICAL && {
+        value,
+        stringValue: categories?.find((category) => category.value === value)
+          ?.label,
+      }),
+      ...(dataType === ScoreDataType.BOOLEAN && {
+        value,
+        stringValue: value === 1 ? "True" : "False",
+      }),
     };
 
     const traceScores = [
@@ -533,12 +695,13 @@ function createObjects(
             {
               traceId: trace.id,
               name: annotationScoreName,
-              value: Math.floor(Math.random() * 3) - 1,
               timestamp: traceTs,
+              createdAt: traceTs,
               source: ScoreSource.ANNOTATION,
               projectId,
               authorUserId: `user-${i}`,
-              dataType: ScoreDataType.NUMERIC,
+              dataType,
+              ...scoreNumericAndStringValue,
               ...(configId ? { configId } : {}),
             },
           ]
@@ -550,13 +713,38 @@ function createObjects(
               name: "sentiment",
               value: Math.floor(Math.random() * 10) - 5,
               timestamp: traceTs,
+              createdAt: traceTs,
               source: ScoreSource.API,
               projectId,
               dataType: ScoreDataType.NUMERIC,
             },
           ]
         : []),
+      ...(Math.random() < 0.8
+        ? [
+            {
+              traceId: trace.id,
+              name: "Completeness",
+              timestamp: traceTs,
+              createdAt: traceTs,
+              source: ScoreSource.API,
+              projectId,
+              dataType: ScoreDataType.CATEGORICAL,
+              stringValue:
+                Math.floor(Math.random() * 2) === 1 ? "Fully" : "Partially",
+            },
+          ]
+        : []),
     ];
+
+    if (Math.random() > 0.9)
+      comments.push({
+        projectId: trace.projectId,
+        objectId: trace.id,
+        objectType: "TRACE",
+        content: "Trace comment content",
+        ...(Math.random() > 0.5 ? { authorUserId: `user-${i}` } : {}),
+      });
 
     scores.push(...traceScores);
 
@@ -576,6 +764,7 @@ function createObjects(
         type: ObservationType.SPAN,
         id: `span-${v4()}`,
         startTime: spanTsStart,
+        createdAt: spanTsStart,
         endTime: spanTsEnd,
         name: `span-${i}-${j}`,
         metadata: {
@@ -643,74 +832,21 @@ function createObjects(
             )
           ];
 
+        const { input, output } = getGenerationInputOutput();
+
         const generation = {
           type: ObservationType.GENERATION,
           id: `generation-${v4()}`,
           startTime: generationTsStart,
+          createdAt: generationTsStart,
           endTime: generationTsEnd,
           completionStartTime:
             Math.random() > 0.5 ? generationTsCompletionStart : undefined,
           name: `generation-${i}-${j}-${k}`,
           projectId: trace.projectId,
           promptId: promptId,
-          input:
-            Math.random() > 0.5
-              ? [
-                  {
-                    role: "system",
-                    content: "Be a helpful assistant",
-                  },
-                  {
-                    role: "user",
-                    content: "How can i create a React component?",
-                  },
-                ]
-              : {
-                  input: "How can i create a React component?",
-                  retrievedDocuments: [
-                    {
-                      title: "How to create a React component",
-                      url: "https://www.google.com",
-                      description: "A guide to creating React components",
-                    },
-                    {
-                      title: "React component creation",
-                      url: "https://www.google.com",
-                      description: "A guide to creating React components",
-                    },
-                  ],
-                },
-          output: {
-            completion: `Creating a React component can be done in two ways: as a functional component or as a class component. Let's start with a basic example of both.
-
-              1.  **Functional Component**:
-              
-              A functional component is just a plain JavaScript function that accepts props as an argument, and returns a React element. Here's how you can create one:
-              
-              
-              'import React from 'react';  function Greeting(props) {   return <h1>Hello, {props.name}</h1>; }  export default Greeting;'
-              
-              To use this component in another file, you can do:
-              
-              
-              'import Greeting from './Greeting';  function App() {   return (     <div>       <Greeting name="John" />     </div>   ); }  export default App;'
-              
-              2.  **Class Component**:
-              
-              You can also define components as classes in React. These have some additional features compared to functional components:
-              
-              
-              'import React, { Component } from 'react';  class Greeting extends Component {   render() {     return <h1>Hello, {this.props.name}</h1>;   } }  export default Greeting;'
-              
-              And here's how to use this component:
-              
-              
-              'import Greeting from './Greeting';  class App extends Component {   render() {     return (       <div>         <Greeting name="John" />       </div>     );   } }  export default App;'
-              
-              With the advent of hooks in React, functional components can do everything that class components can do and hence, the community has been favoring functional components over class components.
-              
-              Remember to import React at the top of your file whenever you're creating a component, because JSX transpiles to 'React.createElement' calls under the hood.`,
-          },
+          input,
+          output,
           model: model,
           internalModel: model,
           modelParameters: {
@@ -746,6 +882,8 @@ function createObjects(
             traceId: trace.id,
             source: ScoreSource.API,
             projectId: trace.projectId,
+            timestamp: generationTsEnd,
+            createdAt: traceTs,
           });
         if (Math.random() > 0.6)
           scores.push({
@@ -755,6 +893,16 @@ function createObjects(
             traceId: trace.id,
             source: ScoreSource.API,
             projectId: trace.projectId,
+            timestamp: generationTsEnd,
+            createdAt: traceTs,
+          });
+
+        if (Math.random() > 0.8)
+          comments.push({
+            projectId: trace.projectId,
+            objectId: generation.id,
+            objectType: "OBSERVATION",
+            content: "Observation comment content",
           });
 
         for (let l = 0; l < Math.floor(Math.random() * 2); l++) {
@@ -770,6 +918,7 @@ function createObjects(
             type: ObservationType.EVENT,
             id: `event-${v4()}`,
             startTime: eventTs,
+            createdAt: eventTs,
             name: `event-${i}-${j}-${k}-${l}`,
             metadata: {
               user: `user-${i}@langfuse.com`,
@@ -794,6 +943,7 @@ function createObjects(
     configs,
     sessions: uniqueSessions,
     events,
+    comments,
   };
 }
 
@@ -976,8 +1126,15 @@ async function generatePrompts(project: Project) {
 }
 
 async function generateConfigsForProject(projects: Project[]) {
-  const projectIdsToConfigs: Map<string, { name: string; id: string }[]> =
-    new Map();
+  const projectIdsToConfigs: Map<
+    string,
+    {
+      name: string;
+      id: string;
+      dataType: ScoreDataType;
+      categories: ConfigCategory[] | null;
+    }[]
+  > = new Map();
 
   await Promise.all(
     projects.map(async (project) => {
@@ -989,7 +1146,12 @@ async function generateConfigsForProject(projects: Project[]) {
 }
 
 async function generateConfigs(project: Project) {
-  const configNameAndId: { name: string; id: string }[] = [];
+  const configNameAndId: {
+    name: string;
+    id: string;
+    dataType: ScoreDataType;
+    categories: ConfigCategory[] | null;
+  }[] = [];
 
   const configs = [
     {
@@ -1046,8 +1208,73 @@ async function generateConfigs(project: Project) {
         id: config.id,
       },
     });
-    configNameAndId.push({ name: config.name, id: config.id });
+    configNameAndId.push({
+      name: config.name,
+      id: config.id,
+      dataType: config.dataType,
+      categories: config.categories ?? null,
+    });
   }
 
   return configNameAndId;
+}
+function getGenerationInputOutput(): {
+  input: Prisma.InputJsonValue;
+  output: Prisma.InputJsonValue;
+} {
+  if (Math.random() > 0.9) {
+    const input = [
+      {
+        role: "user",
+        content: [
+          { text: "What’s depicted in this image?", type: "text" },
+          {
+            type: "image_url",
+            image_url: {
+              url: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",
+            },
+          },
+          { text: "Describe the scene in detail.", type: "text" },
+        ],
+      },
+    ];
+
+    const output =
+      "The image depicts a serene landscape featuring a wooden pathway or boardwalk that winds through a lush green field. The field is filled with tall grass and surrounded by trees and shrubs. Above, the sky is bright with scattered clouds, suggesting a clear and pleasant day. The scene conveys a sense of tranquility and natural beauty.";
+
+    return { input, output };
+  }
+
+  const input =
+    Math.random() > 0.5
+      ? [
+          {
+            role: "system",
+            content: "Be a helpful assistant",
+          },
+          {
+            role: "user",
+            content: "How can i create a *React* component?",
+          },
+        ]
+      : {
+          input: "How can i create a React component?",
+          retrievedDocuments: [
+            {
+              title: "How to create a React component",
+              url: "https://www.google.com",
+              description: "A guide to creating React components",
+            },
+            {
+              title: "React component creation",
+              url: "https://www.google.com",
+              description: "A guide to creating React components",
+            },
+          ],
+        };
+
+  const output =
+    "Creating a React component can be done in two ways: as a functional component or as a class component. Let's start with a basic example of both.\n\n**Image**\n\n![Languse Example Image](https://static.langfuse.com/langfuse-dev/langfuse-example-image.jpeg)\n\n1.  **Functional Component**:\n\nA functional component is just a plain JavaScript function that accepts props as an argument, and returns a React element. Here's how you can create one:\n\n```javascript\nimport React from 'react';\nfunction Greeting(props) {\n  return <h1>Hello, {props.name}</h1>;\n}\nexport default Greeting;\n```\n\nTo use this component in another file, you can do:\n\n```javascript\nimport Greeting from './Greeting';\nfunction App() {\n  return (\n    <div>\n      <Greeting name=\"John\" />\n    </div>\n  );\n}\nexport default App;\n```\n\n2.  **Class Component**:\n\nYou can also define components as classes in React. These have some additional features compared to functional components:\n\n```javascript\nimport React, { Component } from 'react';\nclass Greeting extends Component {\n  render() {\n    return <h1>Hello, {this.props.name}</h1>;\n  }\n}\nexport default Greeting;\n```\n\nAnd here's how to use this component:\n\n```javascript\nimport Greeting from './Greeting';\nclass App extends Component {\n  render() {\n    return (\n      <div>\n        <Greeting name=\"John\" />\n      </div>\n    );\n  }\n}\nexport default App;\n```\n\nWith the advent of hooks in React, functional components can do everything that class components can do and hence, the community has been favoring functional components over class components.\n\nRemember to import React at the top of your file whenever you're creating a component, because JSX transpiles to `React.createElement` calls under the hood.";
+
+  return { input, output };
 }

@@ -1,4 +1,4 @@
-import { type Trace, type Score } from "@langfuse/shared";
+import { type Trace } from "@langfuse/shared";
 import { ObservationTree } from "./ObservationTree";
 import { ObservationPreview } from "./ObservationPreview";
 import { TracePreview } from "./TracePreview";
@@ -24,21 +24,21 @@ import {
   ChevronsUpDown,
   ListTree,
   Network,
-  Terminal,
 } from "lucide-react";
 import { usdFormatter } from "@/src/utils/numbers";
 import Decimal from "decimal.js";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { DeleteButton } from "@/src/components/deleteButton";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
 import { Tabs, TabsList, TabsTrigger } from "@/src/components/ui/tabs";
 import { TraceTimelineView } from "@/src/components/trace/TraceTimelineView";
-import { Alert, AlertDescription, AlertTitle } from "@/src/components/ui/alert";
+import { type APIScore } from "@langfuse/shared";
+import { useSession } from "next-auth/react";
 
 export function Trace(props: {
   observations: Array<ObservationReturnType>;
   trace: Trace;
-  scores: Score[];
+  scores: APIScore[];
   projectId: string;
 }) {
   const capture = usePostHogClientCapture();
@@ -55,6 +55,42 @@ export function Trace(props: {
 
   const [collapsedObservations, setCollapsedObservations] = useState<string[]>(
     [],
+  );
+
+  const observationObjectIds: string[] = useMemo(() => {
+    return props.observations.map(({ id }) => id);
+  }, [props.observations]);
+
+  const observationCommentCounts = api.comments.getCountsByObjectIds.useQuery(
+    {
+      projectId: props.trace.projectId,
+      objectIds: observationObjectIds,
+      objectType: "OBSERVATION",
+    },
+    {
+      trpc: {
+        context: {
+          skipBatch: true,
+        },
+      },
+      refetchOnMount: false, // prevents refetching loops
+    },
+  );
+
+  const traceCommentCounts = api.comments.getCountsByObjectIds.useQuery(
+    {
+      projectId: props.trace.projectId,
+      objectIds: [props.trace.id],
+      objectType: "TRACE",
+    },
+    {
+      trpc: {
+        context: {
+          skipBatch: true,
+        },
+      },
+      refetchOnMount: false, // prevents refetching loops
+    },
   );
 
   const toggleCollapsedObservation = useCallback(
@@ -101,6 +137,7 @@ export function Trace(props: {
   const expandAll = useCallback(() => {
     capture("trace_detail:observation_tree_expand", { type: "all" });
     setCollapsedObservations([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -113,6 +150,7 @@ export function Trace(props: {
             trace={props.trace}
             observations={props.observations}
             scores={props.scores}
+            commentCounts={traceCommentCounts.data}
           />
         ) : (
           <ObservationPreview
@@ -121,6 +159,7 @@ export function Trace(props: {
             projectId={props.projectId}
             currentObservationId={currentObservationId}
             traceId={props.trace.id}
+            commentCounts={observationCommentCounts.data}
           />
         )}
       </div>
@@ -170,6 +209,8 @@ export function Trace(props: {
           setCurrentObservationId={setCurrentObservationId}
           showMetrics={metricsOnObservationTree}
           showScores={scoresOnObservationTree}
+          observationCommentCounts={observationCommentCounts.data}
+          traceCommentCounts={traceCommentCounts.data}
           className="flex w-full flex-col overflow-y-auto"
         />
       </div>
@@ -181,8 +222,9 @@ export function TracePage({ traceId }: { traceId: string }) {
   const capture = usePostHogClientCapture();
   const router = useRouter();
   const utils = api.useUtils();
-  const trace = api.traces.byId.useQuery(
-    { traceId },
+  const session = useSession();
+  const trace = api.traces.byIdWithObservationsAndScores.useQuery(
+    { traceId, projectId: router.query.projectId as string },
     {
       retry(failureCount, error) {
         if (error.data?.code === "UNAUTHORIZED") return false;
@@ -201,7 +243,10 @@ export function TracePage({ traceId }: { traceId: string }) {
           skipBatch: true,
         },
       },
-      enabled: !!trace.data?.projectId && trace.isSuccess,
+      enabled:
+        !!trace.data?.projectId &&
+        trace.isSuccess &&
+        session.status === "authenticated",
     },
   );
 
@@ -260,7 +305,7 @@ export function TracePage({ traceId }: { traceId: string }) {
               itemId={traceId}
               projectId={trace.data.projectId}
               scope="traces:delete"
-              invalidateFunc={() => void utils.traces.invalidate()}
+              invalidateFunc={() => void utils.traces.all.invalidate()}
               type="trace"
               redirectUrl={`/project/${router.query.projectId as string}/traces`}
             />
@@ -293,9 +338,9 @@ export function TracePage({ traceId }: { traceId: string }) {
           </Badge>
         ) : undefined}
       </div>
-      <div className="mt-4 rounded-lg border bg-card font-semibold text-card-foreground shadow-sm">
-        <div className="flex flex-row items-center gap-3 p-2.5">
-          Tags
+      <div className="mt-3 rounded-lg border bg-card font-semibold text-card-foreground">
+        <div className="flex flex-row items-center gap-3 px-3 py-1">
+          <span className="text-sm">Tags</span>
           <TagTraceDetailsPopover
             tags={trace.data.tags}
             availableTags={allTags}
@@ -327,7 +372,6 @@ export function TracePage({ traceId }: { traceId: string }) {
           >
             <ListTree className="mr-1 h-4 w-4"></ListTree>
             Timeline
-            <Badge className="pointer-events-none ml-2 px-1.5">Beta</Badge>
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -344,22 +388,6 @@ export function TracePage({ traceId }: { traceId: string }) {
       )}
       {selectedTab === "timeline" && (
         <div className="mt-5 flex-1 flex-col space-y-5 overflow-hidden">
-          <Alert>
-            <Terminal className="h-4 w-4" />
-            <AlertTitle>New Trace Timeline (beta)</AlertTitle>
-            <AlertDescription>
-              We value your feedback! Share your thoughts on{" "}
-              <a
-                href="https://github.com/orgs/langfuse/discussions/2195"
-                target="_blank"
-                className="underline"
-                rel="noopener noreferrer"
-              >
-                GitHub discussions
-              </a>
-              .
-            </AlertDescription>
-          </Alert>
           <TraceTimelineView
             key={trace.data.id}
             trace={trace.data}

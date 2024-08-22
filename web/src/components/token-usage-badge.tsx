@@ -26,9 +26,9 @@ export const TokenUsageBadge = (
         observation: Observation;
       }
     | {
-        promptTokens: number;
-        completionTokens: number;
-        totalTokens: number;
+        promptTokens: number | bigint;
+        completionTokens: number | bigint;
+        totalTokens: number | bigint;
       }
   ) & {
     inline?: boolean;
@@ -53,7 +53,7 @@ export const TokenUsageBadge = (
   if (props.inline)
     return (
       <span>
-        {`${numberFormatter(usage.promptTokens, 0)} → ${numberFormatter(usage.promptTokens, 0)} (∑ ${numberFormatter(usage.totalTokens, 0)})`}
+        {`${numberFormatter(usage.promptTokens, 0)} → ${numberFormatter(usage.completionTokens, 0)} (∑ ${numberFormatter(usage.totalTokens, 0)})`}
       </span>
     );
 

@@ -1,32 +1,13 @@
-# Public API
+## Caching Strategy of API Keys
 
-## How to add new api routes
+### Cache Structure
 
-Implementation
+The cache for API keys is managed using Redis. The cache key looks like the following: `api-key:<secret-key>:`. The hash is the `fastHashedSecretKey` from postgres. Hence, we can easily find the key in Redis.
 
-- Wrap with `withMiddleware`
-- Type-safe and authed API Route with `createAuthedAPIRoute`
-- Add zod types to `/features/public-api/types` folder. Use [`coerce`](https://zod.dev/?id=coercion-for-primitives) to handle primitives, such as dates, for use in your application and tests.
-- Throw errors defined in `shared/src/errors` which translate to HTTP status codes
+### Creation and updates of API keys
 
-Testing
+When creating a new API key, nothing happens in the cache. The API key is only created in the database. There are no functionalities in Langfuse to update API keys.
 
-- Add tests for all standard cases
-- use `makeZodVerifiedAPICall` to test the API response against the zod response schema
+### Reading API keys
 
-API Reference
-
-- Add to `fern` including `docs` attributes
-- Build with `fern generate --api server` and `fern generate --api client`, then commit the changes to the API reference
-
-SDKs
-
-- Copy/paste fern-generated types or api reference to Python and JS SDKs respectively
-- Implement wrapping functions if needed
-
-How to refactor existing apis to this pattern
-
-1. Move request types to `features/public-api/types`
-2. Create response types in `features/public-api/types`
-3. Validate response type with `validateZodSchema` in the API route to get type warnings in case of mismatch
-4. Refactor api route by passing current api route to LLM together with example of e.g. public/v2/datasets.ts
+When reading API keys, we prefer to get the key from Redis and reset the TTL (time-to-live) on each read to ensure it remains in the cache. If the key is not found in Redis, we read from Postgres and store it in the cache.
