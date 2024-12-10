@@ -45,8 +45,6 @@ COPY --from=pruner /app/out/full/ .
 
 RUN turbo run build --filter=worker...
 
-
-
 FROM --platform=${TARGETPLATFORM:-linux/amd64} base AS runner
 
 RUN apk add --no-cache dumb-init
@@ -61,9 +59,14 @@ RUN addgroup --system --gid 1001 expressjs
 RUN adduser --system --uid 1001 expressjs
 USER expressjs
 COPY --from=builder --chown=expressjs:expressjs /app .
+COPY --chown=expressjs:expressjs ./worker/entrypoint.sh ./worker/entrypoint.sh
+RUN chmod +x ./worker/entrypoint.sh
 
 EXPOSE 3030
 ENV PORT=3030
 
-ENTRYPOINT ["dumb-init", "--", "node", "worker/dist/index.js"]
+ENTRYPOINT ["dumb-init", "--", "./worker/entrypoint.sh"]
+
+# startup command
+CMD ["node", "worker/dist/index.js"]
 

@@ -18,8 +18,10 @@ import {
   getScoreGroupColumnProps,
   verifyAndPrefixScoreDataAgainstKeys,
 } from "@/src/features/scores/components/ScoreDetailColumnHelpers";
-import { type ScoreAggregate } from "@/src/features/scores/lib/types";
+import { type ScoreAggregate } from "@langfuse/shared";
 import { useIndividualScoreColumns } from "@/src/features/scores/hooks/useIndividualScoreColumns";
+import useColumnOrder from "@/src/features/column-visibility/hooks/useColumnOrder";
+import { useClickhouse } from "@/src/components/layouts/ClickhouseAdminToggle";
 
 export type DatasetRunItemRowData = {
   id: string;
@@ -62,6 +64,7 @@ export function DatasetRunItemsTable(
     ...props,
     page: paginationState.pageIndex,
     limit: paginationState.pageSize,
+    queryClickhouse: useClickhouse(),
   });
   const [rowHeight, setRowHeight] = useRowHeightLocalStorage("traces", "m");
 
@@ -69,13 +72,15 @@ export function DatasetRunItemsTable(
     if (runItems.isSuccess) {
       setDetailPageList(
         "traces",
-        runItems.data.runItems.filter((i) => !!i.trace).map((i) => i.trace!.id),
+        runItems.data.runItems
+          .filter((i) => !!i.trace)
+          .map((i) => ({ id: i.trace!.id })),
       );
       // set the datasetItems list only when viewing this table from the run page
       if ("datasetRunId" in props)
         setDetailPageList(
           "datasetItems",
-          runItems.data.runItems.map((i) => i.datasetItemId),
+          runItems.data.runItems.map((i) => ({ id: i.datasetItemId })),
         );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -119,13 +124,13 @@ export function DatasetRunItemsTable(
         if (!trace) return null;
         return trace.observationId ? (
           <TableLink
-            path={`/project/${props.projectId}/traces/${trace.traceId}?observation=${trace.observationId}`}
+            path={`/project/${props.projectId}/traces/${encodeURIComponent(trace.traceId)}?observation=${encodeURIComponent(trace.observationId)}`}
             value={`Trace: ${trace.traceId}, Observation: ${trace.observationId}`}
             icon={<ListTree className="h-4 w-4" />}
           />
         ) : (
           <TableLink
-            path={`/project/${props.projectId}/traces/${trace.traceId}`}
+            path={`/project/${props.projectId}/traces/${encodeURIComponent(trace.traceId)}`}
             value={`Trace: ${trace.traceId}`}
             icon={<ListTree className="h-4 w-4" />}
           />
@@ -222,6 +227,11 @@ export function DatasetRunItemsTable(
       columns,
     );
 
+  const [columnOrder, setColumnOrder] = useColumnOrder<DatasetRunItemRowData>(
+    "datasetRunsItemsColumnOrder",
+    columns,
+  );
+
   const rows = useMemo(() => {
     return runItems.isSuccess
       ? runItems.data.runItems.map((item) => {
@@ -241,7 +251,9 @@ export function DatasetRunItemsTable(
             ),
             totalCost: !!item.observation?.calculatedTotalCost
               ? usdFormatter(item.observation.calculatedTotalCost.toNumber())
-              : undefined,
+              : !!item.trace?.totalCost
+                ? usdFormatter(item.trace.totalCost)
+                : undefined,
             latency:
               item.observation?.latency ?? item.trace?.duration ?? undefined,
           };
@@ -255,6 +267,8 @@ export function DatasetRunItemsTable(
         columns={columns}
         columnVisibility={columnVisibility}
         setColumnVisibility={setColumnVisibility}
+        columnOrder={columnOrder}
+        setColumnOrder={setColumnOrder}
         rowHeight={rowHeight}
         setRowHeight={setRowHeight}
       />
@@ -276,14 +290,14 @@ export function DatasetRunItemsTable(
                 }
         }
         pagination={{
-          pageCount: Math.ceil(
-            (runItems.data?.totalRunItems ?? 0) / paginationState.pageSize,
-          ),
+          totalCount: runItems.data?.totalRunItems ?? null,
           onChange: setPaginationState,
           state: paginationState,
         }}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={setColumnVisibility}
+        columnOrder={columnOrder}
+        onColumnOrderChange={setColumnOrder}
         rowHeight={rowHeight}
       />
     </>
@@ -314,6 +328,7 @@ const TraceObservationIOCell = ({
         },
       },
       refetchOnMount: false, // prevents refetching loops
+      onError: () => {},
     },
   );
   const observation = api.observations.byId.useQuery(
@@ -330,6 +345,7 @@ const TraceObservationIOCell = ({
         },
       },
       refetchOnMount: false, // prevents refetching loops
+      onError: () => {},
     },
   );
 
@@ -337,7 +353,9 @@ const TraceObservationIOCell = ({
 
   return (
     <IOTableCell
-      isLoading={!!!observationId ? trace.isLoading : observation.isLoading}
+      isLoading={
+        (!!!observationId ? trace.isLoading : observation.isLoading) || !data
+      }
       data={io === "output" ? data?.output : data?.input}
       className={cn(io === "output" && "bg-accent-light-green")}
       singleLine={singleLine}

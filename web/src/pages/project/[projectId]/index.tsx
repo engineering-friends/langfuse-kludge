@@ -3,7 +3,7 @@ import { useRouter } from "next/router";
 import { GenerationLatencyChart } from "@/src/features/dashboard/components/LatencyChart";
 import { ChartScores } from "@/src/features/dashboard/components/ChartScores";
 import { TracesBarListChart } from "@/src/features/dashboard/components/TracesBarListChart";
-import { MetricTable } from "@/src/features/dashboard/components/MetricTable";
+import { ModelCostTable } from "@/src/features/dashboard/components/ModelCostTable";
 import { ScoresTable } from "@/src/features/dashboard/components/ScoresTable";
 import { ModelUsageChart } from "@/src/features/dashboard/components/ModelUsageChart";
 import { TracesTimeSeriesChart } from "@/src/features/dashboard/components/TracesTimeSeriesChart";
@@ -26,6 +26,9 @@ import { useDebounce } from "@/src/hooks/useDebounce";
 import { ScoreAnalytics } from "@/src/features/dashboard/components/score-analytics/ScoreAnalytics";
 import SetupTracingButton from "@/src/features/setup/components/SetupTracingButton";
 import { useUiCustomization } from "@/src/ee/features/ui-customization/useUiCustomization";
+import { ScrollScreenPage } from "@/src/components/layouts/scroll-screen-page";
+import { useClickhouse } from "@/src/components/layouts/ClickhouseAdminToggle";
+import { useEntitlementLimit } from "@/src/features/entitlements/hooks";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -35,6 +38,8 @@ export default function Dashboard() {
 
   const uiCustomization = useUiCustomization();
 
+  const lookbackLimit = useEntitlementLimit("data-access-days");
+
   const session = useSession();
   const disableExpensiveDashboardComponents =
     session.data?.environment.disableExpensivePostgresQueries ?? true;
@@ -42,6 +47,7 @@ export default function Dashboard() {
   const traceFilterOptions = api.traces.filterOptions.useQuery(
     {
       projectId,
+      queryClickhouse: useClickhouse(),
     },
     {
       trpc: {
@@ -49,6 +55,10 @@ export default function Dashboard() {
           skipBatch: true,
         },
       },
+      refetchOnMount: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      staleTime: Infinity,
     },
   );
   const nameOptions = traceFilterOptions.data?.name || [];
@@ -92,12 +102,13 @@ export default function Dashboard() {
   const [userFilterState, setUserFilterState] = useQueryFilterState(
     [],
     "dashboard",
+    projectId,
   );
 
   const agg = useMemo(
     () =>
       dateRange
-        ? findClosestDashboardInterval(dateRange) ?? "7 days"
+        ? (findClosestDashboardInterval(dateRange) ?? "7 days")
         : "7 days",
     [dateRange],
   );
@@ -135,15 +146,25 @@ export default function Dashboard() {
   const mergedFilterState: FilterState = [...userFilterState, ...timeFilter];
 
   return (
-    <div className="md:container">
+    <ScrollScreenPage>
       <Header title="Dashboard" actionButtons={<SetupTracingButton />} />
       <div className="my-3 flex flex-wrap items-center justify-between gap-2">
-        <div className=" flex flex-col gap-2 lg:flex-row">
+        <div className="flex flex-col gap-2 lg:flex-row">
           <DatePickerWithRange
             dateRange={dateRange}
             setDateRangeAndOption={useDebounce(setDateRangeAndOption)}
             selectedOption={selectedOption}
             className="my-0 max-w-full overflow-x-auto"
+            disabled={
+              lookbackLimit
+                ? {
+                    before: new Date(
+                      new Date().getTime() -
+                        lookbackLimit * 24 * 60 * 60 * 1000,
+                    ),
+                  }
+                : undefined
+            }
           />
           <PopoverFilterBuilder
             columns={filterColumns}
@@ -174,14 +195,14 @@ export default function Dashboard() {
           </FeedbackButtonWrapper>
         )}
       </div>
-      <div className="grid w-full grid-cols-1 gap-4 overflow-hidden lg:grid-cols-2 xl:grid-cols-6">
+      <div className="grid w-full grid-cols-1 gap-3 overflow-hidden lg:grid-cols-2 xl:grid-cols-6">
         <TracesBarListChart
           className="col-span-1 xl:col-span-2"
           projectId={projectId}
           globalFilterState={mergedFilterState}
         />
         {!disableExpensiveDashboardComponents && (
-          <MetricTable
+          <ModelCostTable
             className="col-span-1 xl:col-span-2"
             projectId={projectId}
             globalFilterState={mergedFilterState}
@@ -200,7 +221,7 @@ export default function Dashboard() {
         />
         {!disableExpensiveDashboardComponents && (
           <ModelUsageChart
-            className="col-span-1  min-h-24 xl:col-span-3"
+            className="col-span-1 min-h-24 xl:col-span-3"
             projectId={projectId}
             globalFilterState={mergedFilterState}
             agg={agg}
@@ -243,6 +264,6 @@ export default function Dashboard() {
           />
         )}
       </div>
-    </div>
+    </ScrollScreenPage>
   );
 }

@@ -16,7 +16,7 @@ import { PostHogLogo } from "@/src/components/PosthogLogo";
 import { Card } from "@/src/components/ui/card";
 import { ScoreConfigSettings } from "@/src/features/scores/components/ScoreConfigSettings";
 import { TransferProjectButton } from "@/src/features/projects/components/TransferProjectButton";
-import { useHasOrgEntitlement } from "@/src/features/entitlements/hooks";
+import { useHasEntitlement } from "@/src/features/entitlements/hooks";
 import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import { useRouter } from "next/router";
 import { SettingsDangerZone } from "@/src/components/SettingsDangerZone";
@@ -24,6 +24,7 @@ import { SettingsDangerZone } from "@/src/components/SettingsDangerZone";
 export default function SettingsPage() {
   const { project, organization } = useQueryProject();
   const router = useRouter();
+  const showBillingSettings = useHasEntitlement("cloud-billing");
   if (!project || !organization) return null;
   return (
     <div className="lg:container">
@@ -35,7 +36,7 @@ export default function SettingsPage() {
             title: "General",
             slug: "index",
             content: (
-              <div className="flex flex-col gap-10">
+              <div className="flex flex-col gap-6">
                 <HostNameProject />
                 <RenameProject />
                 <div>
@@ -71,7 +72,7 @@ export default function SettingsPage() {
             title: "API Keys",
             slug: "api-keys",
             content: (
-              <div className="flex flex-col gap-10">
+              <div className="flex flex-col gap-6">
                 <ApiKeyList projectId={project.id} />
                 <LlmApiKeyList projectId={project.id} />
               </div>
@@ -109,6 +110,12 @@ export default function SettingsPage() {
             content: <Integrations projectId={project.id} />,
           },
           {
+            title: "Billing",
+            slug: "billing",
+            href: `/organization/${organization.id}/settings/billing`,
+            show: showBillingSettings,
+          },
+          {
             title: "Organization Settings",
             slug: "organization",
             href: `/organization/${organization.id}/settings`,
@@ -120,7 +127,7 @@ export default function SettingsPage() {
 }
 
 const Integrations = (props: { projectId: string }) => {
-  const entitled = useHasOrgEntitlement("integration-posthog");
+  const entitled = useHasEntitlement("integration-posthog");
   const hasAccess = useHasProjectAccess({
     projectId: props.projectId,
     scope: "integrations:CRUD",
@@ -129,7 +136,7 @@ const Integrations = (props: { projectId: string }) => {
   return (
     <div>
       <Header title="Integrations" level="h3" />
-      <Card className="p-4">
+      <Card className="p-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <PostHogLogo className="mb-4 w-40 text-foreground" />
         <p className="mb-4 text-sm text-primary">

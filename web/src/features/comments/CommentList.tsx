@@ -56,7 +56,7 @@ export function CommentList({
       objectId,
       objectType,
     },
-    { enabled: hasReadAccess },
+    { enabled: hasReadAccess && session.status === "authenticated" },
   );
 
   const form = useForm<z.infer<typeof CreateCommentData>>({
@@ -96,7 +96,11 @@ export function CommentList({
     }));
   }, [comments.data]);
 
-  if (!hasReadAccess || (!hasWriteAccess && comments.data?.length === 0))
+  if (
+    !hasReadAccess ||
+    (!hasWriteAccess && comments.data?.length === 0) ||
+    session.status !== "authenticated"
+  )
     return null;
 
   function onSubmit(values: z.infer<typeof CreateCommentData>) {
@@ -161,7 +165,7 @@ export function CommentList({
               <div className="flex justify-end">
                 <Button
                   type="submit"
-                  size="xs"
+                  size="icon-xs"
                   variant="outline"
                   title="Submit comment"
                   loading={createCommentMutation.isLoading}
@@ -170,7 +174,7 @@ export function CommentList({
                   }}
                   className="absolute bottom-2 right-2"
                 >
-                  <ArrowUpToLine className="h-4 w-4" />
+                  <ArrowUpToLine className="h-3 w-3" />
                 </Button>
               </div>
             </form>
@@ -192,7 +196,7 @@ export function CommentList({
                       .map((word) => word[0])
                       .slice(0, 2)
                       .concat("")
-                  : comment.authorUserId ?? "U"}
+                  : (comment.authorUserId ?? "U")}
               </AvatarFallback>
             </Avatar>
             <div className="relative rounded-md border">
@@ -208,7 +212,7 @@ export function CommentList({
                     {session.data?.user?.id === comment.authorUserId && (
                       <Button
                         type="button"
-                        size="xs"
+                        size="icon-xs"
                         variant="destructive-secondary"
                         title="Delete comment"
                         loading={deleteCommentMutation.isLoading}

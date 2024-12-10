@@ -5,6 +5,7 @@ import {
   Drawer,
   DrawerContent,
   DrawerHeader,
+  DrawerTitle,
   DrawerTrigger,
 } from "@/src/components/ui/drawer";
 import { type APIScore } from "@langfuse/shared";
@@ -24,6 +25,7 @@ export function AnnotateDrawer({
   variant = "button",
   type = "trace",
   source = "TraceDetail",
+  hasGroupedButton = false,
 }: {
   traceId: string;
   scores: APIScore[];
@@ -34,6 +36,7 @@ export function AnnotateDrawer({
   variant?: "button" | "badge";
   type?: "trace" | "observation" | "session";
   source?: "TraceDetail" | "SessionDetail";
+  hasGroupedButton?: boolean;
 }) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const capture = usePostHogClientCapture();
@@ -62,6 +65,7 @@ export function AnnotateDrawer({
           <Button
             variant="secondary"
             disabled={!hasAccess}
+            className={hasGroupedButton ? "rounded-r-none" : ""}
             onClick={() => {
               setIsDrawerOpen(true);
               capture(
@@ -76,9 +80,9 @@ export function AnnotateDrawer({
             }}
           >
             {!hasAccess ? (
-              <LockIcon className="mr-2 h-3 w-3" />
+              <LockIcon className="mr-1.5 h-3 w-3" />
             ) : (
-              <SquarePen className="mr-2 h-5 w-5" />
+              <SquarePen className="mr-1.5 h-4 w-4" />
             )}
             <span>Annotate</span>
           </Button>
@@ -103,17 +107,19 @@ export function AnnotateDrawer({
           </Button>
         )}
       </DrawerTrigger>
-      <DrawerContent className="h-1/3">
+      <DrawerContent>
         {configsData.isLoading ? (
           <DrawerHeader className="sticky top-0 z-10 rounded-sm bg-background">
-            <Header
-              title="Annotate"
-              level="h3"
-              help={{
-                description: `Annotate ${observationId ? "observation" : "trace"} with scores to capture human evaluation across different dimensions.`,
-                href: "https://langfuse.com/docs/scores/manually",
-              }}
-            ></Header>
+            <DrawerTitle>
+              <Header
+                title="Annotate"
+                level="h3"
+                help={{
+                  description: `Annotate ${observationId ? "observation" : "trace"} with scores to capture human evaluation across different dimensions.`,
+                  href: "https://langfuse.com/docs/scores/manually",
+                }}
+              ></Header>
+            </DrawerTitle>
             <div className="flex min-h-[9rem] items-center justify-center rounded border border-dashed p-2">
               <LoaderCircle className="mr-1.5 h-4 w-4 animate-spin text-muted-foreground" />
               <span className="text-xs text-muted-foreground opacity-60">

@@ -9,18 +9,19 @@ import { useRouter } from "next/router";
 import { SettingsDangerZone } from "@/src/components/SettingsDangerZone";
 import { DeleteOrganizationButton } from "@/src/features/organizations/components/DeleteOrganizationButton";
 import { BillingSettings } from "@/src/ee/features/billing/components/BillingSettings";
-import { useHasOrgEntitlement } from "@/src/features/entitlements/hooks";
+import { useHasEntitlement } from "@/src/features/entitlements/hooks";
+import { ScrollScreenPage } from "@/src/components/layouts/scroll-screen-page";
 
 const OrgSettingsPage = () => {
   const organization = useQueryOrganization();
   const router = useRouter();
   const { page } = router.query;
-  const showBillingSettings = useHasOrgEntitlement("cloud-billing");
+  const showBillingSettings = useHasEntitlement("cloud-billing");
 
   if (!organization) return null;
 
   return (
-    <div className="lg:container">
+    <ScrollScreenPage>
       <Header title="Organization Settings" />
       <PagedSettingsContainer
         activeSlug={page as string | undefined}
@@ -29,7 +30,7 @@ const OrgSettingsPage = () => {
             title: "General",
             slug: "index",
             content: (
-              <div className="flex flex-col gap-10">
+              <div className="flex flex-col gap-6">
                 <RenameOrganization />
                 <div>
                   <Header title="Debug Information" level="h3" />
@@ -55,7 +56,7 @@ const OrgSettingsPage = () => {
             title: "Members",
             slug: "members",
             content: (
-              <div className="flex flex-col gap-10">
+              <div className="flex flex-col gap-6">
                 <div>
                   <Header title="Organization Members" level="h3" />
                   <MembersTable orgId={organization.id} />
@@ -79,7 +80,7 @@ const OrgSettingsPage = () => {
           },
         ]}
       />
-    </div>
+    </ScrollScreenPage>
   );
 };
 

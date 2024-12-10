@@ -2,6 +2,8 @@ import { VERSION } from "@/src/constants";
 import { ServerPosthog } from "@/src/features/posthog-analytics/ServerPosthog";
 import { Prisma, prisma } from "@langfuse/shared/src/db";
 import { v4 as uuidv4 } from "uuid";
+import { logger } from "@langfuse/shared/src/server";
+import { env } from "@/src/env.mjs";
 
 // Interval between jobs in milliseconds
 const JOB_INTERVAL_MINUTES = Prisma.raw("60");
@@ -13,12 +15,12 @@ export async function telemetry() {
   try {
     // Only run in prod
     if (process.env.NODE_ENV !== "production") return;
-    // Do not run in Lanfuse cloud, separate telemetry is used
-    if (process.env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION !== undefined) return;
+    // Do not run in Langfuse cloud, separate telemetry is used
+    if (env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION !== undefined) return;
     // Check if telemetry is not disabled, except for EE
     if (
-      process.env.TELEMETRY_ENABLED === "false" &&
-      process.env.LANGFUSE_EE_LICENSE_KEY === undefined
+      env.TELEMETRY_ENABLED === "false" &&
+      env.LANGFUSE_EE_LICENSE_KEY === undefined
     )
       return;
     // Do not run in CI
@@ -45,7 +47,7 @@ export async function telemetry() {
     }
   } catch (error) {
     // Catch all errors to be sure telemetry does not break the application
-    console.error("Telemetry, unexpected error:", error);
+    logger.error("Telemetry, unexpected error:", error);
   }
 }
 
@@ -85,7 +87,7 @@ async function jobScheduler(): Promise<
     ) AS status;`;
   // Return if job should not run
   if (checkNoLock.length !== 1) {
-    console.error("Telemetry failed to check if job should run");
+    logger.error("Telemetry failed to check if job should run");
     return { shouldRunJob: false };
   }
   if (!checkNoLock[0]!.status) return { shouldRunJob: false };
@@ -119,7 +121,7 @@ async function jobScheduler(): Promise<
 
   // Other job was created in the meantime
   if (createJobLocked.length !== 1) {
-    console.error("Telemetry job is locked");
+    logger.error("Telemetry job is locked");
     return { shouldRunJob: false };
   }
 
@@ -127,7 +129,7 @@ async function jobScheduler(): Promise<
 
   // should not happen
   if (!jobStartedAt) {
-    console.error("Telemetry failed to create job_started_at");
+    logger.error("Telemetry failed to create job_started_at");
     return { shouldRunJob: false };
   }
 
@@ -150,7 +152,11 @@ async function posthogTelemetry({
   try {
     const posthog = new ServerPosthog();
     // Count projects
-    const totalProjects = await prisma.project.count();
+    const totalProjects = await prisma.project.count({
+      where: {
+        deletedAt: null,
+      },
+    });
 
     // Count traces
     const countTraces = await prisma.trace.count({
@@ -250,8 +256,8 @@ async function posthogTelemetry({
         datasetRunItems: countDatasetRunItems,
         startTimeframe: startTimeframe?.toISOString(),
         endTimeframe: endTimeframe.toISOString(),
-        eeLicenseKey: process.env.LANGFUSE_EE_LICENSE_KEY,
-        langfuseCloudRegion: process.env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION,
+        eeLicenseKey: env.LANGFUSE_EE_LICENSE_KEY,
+        langfuseCloudRegion: env.NEXT_PUBLIC_LANGFUSE_CLOUD_REGION,
         $set: {
           environment: process.env.NODE_ENV,
           userDomains: domains,
@@ -261,8 +267,8 @@ async function posthogTelemetry({
       },
     });
 
-    await posthog.shutdownAsync();
+    await posthog.shutdown();
   } catch (error) {
-    console.error(error);
+    logger.error(error);
   }
 }

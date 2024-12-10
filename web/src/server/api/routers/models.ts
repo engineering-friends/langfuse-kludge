@@ -20,29 +20,30 @@ export const modelRouter = createTRPCRouter({
   all: protectedProjectProcedure
     .input(ModelAllOptions)
     .query(async ({ input, ctx }) => {
-      const models = await ctx.prisma.model.findMany({
-        where: {
-          OR: [{ projectId: input.projectId }, { projectId: null }],
-        },
-        skip: input.page * input.limit,
-        orderBy: [
-          { modelName: "asc" },
-          { unit: "asc" },
-          {
-            startDate: {
-              sort: "desc",
-              nulls: "last",
-            },
+      const [models, totalAmount] = await Promise.all([
+        ctx.prisma.model.findMany({
+          where: {
+            OR: [{ projectId: input.projectId }, { projectId: null }],
           },
-        ],
-        take: input.limit,
-      });
-
-      const totalAmount = await ctx.prisma.model.count({
-        where: {
-          OR: [{ projectId: input.projectId }, { projectId: null }],
-        },
-      });
+          skip: input.page * input.limit,
+          orderBy: [
+            { modelName: "asc" },
+            { unit: "asc" },
+            {
+              startDate: {
+                sort: "desc",
+                nulls: "last",
+              },
+            },
+          ],
+          take: input.limit,
+        }),
+        ctx.prisma.model.count({
+          where: {
+            OR: [{ projectId: input.projectId }, { projectId: null }],
+          },
+        }),
+      ]);
       return {
         models,
         totalCount: totalAmount,
@@ -131,19 +132,47 @@ export const modelRouter = createTRPCRouter({
         });
       }
 
-      const createdModel = await ctx.prisma.model.create({
-        data: {
-          projectId: input.projectId,
-          modelName: input.modelName,
-          matchPattern: input.matchPattern,
-          startDate: input.startDate,
-          inputPrice: input.inputPrice,
-          outputPrice: input.outputPrice,
-          totalPrice: input.totalPrice,
-          unit: input.unit,
-          tokenizerId: input.tokenizerId,
-          tokenizerConfig: input.tokenizerConfig,
-        },
+      const createdModel = await ctx.prisma.$transaction(async (tx) => {
+        const createdModel = await tx.model.create({
+          data: {
+            projectId: input.projectId,
+            modelName: input.modelName,
+            matchPattern: input.matchPattern,
+            startDate: input.startDate,
+            inputPrice: input.inputPrice,
+            outputPrice: input.outputPrice,
+            totalPrice: input.totalPrice,
+            unit: input.unit,
+            tokenizerId: input.tokenizerId,
+            tokenizerConfig: input.tokenizerConfig,
+          },
+        });
+
+        // Populate prices table
+        const prices = [
+          { usageType: "input", price: input.inputPrice },
+          { usageType: "output", price: input.outputPrice },
+          { usageType: "total", price: input.totalPrice },
+        ];
+
+        const pricesToCreate = [];
+        for (const { usageType, price } of prices) {
+          if (price != null) {
+            pricesToCreate.push(
+              tx.price.create({
+                data: {
+                  modelId: createdModel.id,
+                  usageType,
+                  price,
+                },
+              }),
+            );
+          }
+        }
+
+        await Promise.all(pricesToCreate);
+
+        return createdModel;
       });
 
       await auditLog({

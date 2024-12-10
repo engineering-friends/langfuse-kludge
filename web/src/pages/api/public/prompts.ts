@@ -22,8 +22,11 @@ import {
   redis,
   recordIncrement,
   traceException,
+  logger,
 } from "@langfuse/shared/src/server";
 import { PRODUCTION_LABEL } from "@/src/features/prompts/constants";
+import { RateLimitService } from "@/src/features/public-api/server/RateLimitService";
+import { telemetry } from "@/src/features/telemetry";
 
 export default async function handler(
   req: NextApiRequest,
@@ -44,12 +47,23 @@ export default async function handler(
         `Access denied - need to use basic auth with secret key to ${req.method} prompts`,
       );
 
+    await telemetry();
+
     // Handle GET requests
     if (req.method === "GET") {
       const searchParams = GetPromptSchema.parse(req.query);
       const projectId = authCheck.scope.projectId;
       const promptName = searchParams.name;
       const version = searchParams.version ?? undefined;
+
+      const rateLimitCheck = await new RateLimitService(redis).rateLimitRequest(
+        authCheck.scope,
+        "prompts",
+      );
+
+      if (rateLimitCheck?.isRateLimited()) {
+        return rateLimitCheck.sendRestResponseIfLimited(res);
+      }
 
       const promptService = new PromptService(prisma, redis, recordIncrement);
 
@@ -101,7 +115,7 @@ export default async function handler(
 
     throw new MethodNotAllowedError();
   } catch (error: unknown) {
-    console.error(error);
+    logger.error(error);
     traceException(error);
 
     if (error instanceof BaseError) {

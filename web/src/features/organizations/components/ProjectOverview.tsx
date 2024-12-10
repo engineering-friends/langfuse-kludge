@@ -2,6 +2,7 @@ import { Building2, LifeBuoy, LockIcon, Settings, Users } from "lucide-react";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -23,10 +24,8 @@ import {
   createOrganizationRoute,
   createProjectRoute,
 } from "@/src/features/setup/setupRoutes";
-import {
-  isCloudPlan,
-  planLabels,
-} from "@/src/features/entitlements/constants/plans";
+import { isCloudPlan, planLabels } from "@langfuse/shared";
+import { ScrollScreenPage } from "@/src/components/layouts/scroll-screen-page";
 
 const SingleOrganizationProjectOverview = ({
   orgId,
@@ -87,7 +86,7 @@ const SingleOrganizationProjectOverview = ({
         level={level}
         status={orgId === env.NEXT_PUBLIC_DEMO_ORG_ID ? "Demo Org" : undefined}
         label={
-          isCloudPlan(org.plan)
+          isCloudPlan(org.plan) && level === "h3"
             ? {
                 text: planLabels[org.plan],
                 href: `/organization/${org.id}/settings/billing`,
@@ -135,16 +134,22 @@ const SingleOrganizationProjectOverview = ({
               <CardHeader>
                 <CardTitle className="text-base">{project.name}</CardTitle>
               </CardHeader>
-              <CardFooter className="gap-2">
-                <Button asChild variant="secondary">
-                  <Link href={`/project/${project.id}`}>Go to project</Link>
-                </Button>
-                <Button asChild variant="ghost">
-                  <Link href={`/project/${project.id}/settings`}>
-                    <Settings size={16} />
-                  </Link>
-                </Button>
-              </CardFooter>
+              {!project.deletedAt ? (
+                <CardFooter className="gap-2">
+                  <Button asChild variant="secondary">
+                    <Link href={`/project/${project.id}`}>Go to project</Link>
+                  </Button>
+                  <Button asChild variant="ghost">
+                    <Link href={`/project/${project.id}/settings`}>
+                      <Settings size={16} />
+                    </Link>
+                  </Button>
+                </CardFooter>
+              ) : (
+                <CardContent>
+                  <CardDescription>Project is being deleted</CardDescription>
+                </CardContent>
+              )}
             </Card>
           ))}
       </div>
@@ -169,7 +174,7 @@ export const OrganizationProjectOverview = () => {
       .length === 0 && !queryOrgId;
 
   return (
-    <div className="md:container">
+    <ScrollScreenPage>
       {!queryOrgId && (
         <>
           <Header
@@ -218,7 +223,7 @@ export const OrganizationProjectOverview = () => {
             />
           </Fragment>
         ))}
-    </div>
+    </ScrollScreenPage>
   );
 };
 
@@ -251,9 +256,11 @@ const Onboarding = () => {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {canCreateOrgs
-          ? "Create an organization to get started. Alternatively, ask your organization admin to invite you."
-          : "You need to get invited to an organization to get started with Langfuse."}
+        <CardDescription>
+          {canCreateOrgs
+            ? "Create an organization to get started. Alternatively, ask your organization admin to invite you."
+            : "You need to get invited to an organization to get started with Langfuse."}
+        </CardDescription>
       </CardContent>
       <CardFooter className="flex gap-4">
         {canCreateOrgs && (

@@ -16,9 +16,9 @@ import usePlaygroundCache from "@/src/ee/features/playground/page/hooks/usePlayg
 import { getFinalModelParams } from "@/src/ee/utils/getFinalModelParams";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics/usePostHogClientCapture";
 import useProjectIdFromURL from "@/src/hooks/useProjectIdFromURL";
-import { extractVariables } from "@/src/utils/string";
 import {
   ChatMessageRole,
+  extractVariables,
   type ChatMessageWithId,
   type PromptVariable,
   type UIModelParams,
@@ -26,6 +26,7 @@ import {
 
 import type { MessagesContext } from "@/src/components/ChatMessages/types";
 import type { ModelParamsContext } from "@/src/components/ModelParameters";
+import { env } from "@/src/env.mjs";
 
 type PlaygroundContextType = {
   promptVariables: PromptVariable[];
@@ -234,6 +235,7 @@ export const PlaygroundProvider: React.FC<PropsWithChildren> = ({
 
         messages,
         addMessage,
+        setMessages,
         updateMessage,
         deleteMessage,
 
@@ -270,11 +272,14 @@ async function* getChatCompletionStream(
     messages,
     modelParams: getFinalModelParams(modelParams),
   });
-  const result = await fetch("/api/chatCompletion", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
+  const result = await fetch(
+    `${env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chatCompletion`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    },
+  );
 
   if (!result.ok) {
     const errorData = await result.json();

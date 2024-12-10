@@ -8,6 +8,8 @@ import { organizationNameSchema } from "@/src/features/organizations/utils/organ
 import * as z from "zod";
 import { throwIfNoOrganizationAccess } from "@/src/features/rbac/utils/checkOrganizationAccess";
 import { TRPCError } from "@trpc/server";
+import { ApiAuthService } from "@/src/features/public-api/server/apiAuth";
+import { redis } from "@langfuse/shared/src/server";
 
 export const organizationsRouter = createTRPCRouter({
   create: protectedProcedure
@@ -99,6 +101,7 @@ export const organizationsRouter = createTRPCRouter({
       const countProjects = await ctx.prisma.project.count({
         where: {
           orgId: input.orgId,
+          deletedAt: null,
         },
       });
       if (countProjects > 0) {
@@ -114,6 +117,11 @@ export const organizationsRouter = createTRPCRouter({
           id: input.orgId,
         },
       });
+
+      // the api keys contain which org they belong to, so we need to remove them from Redis
+      await new ApiAuthService(ctx.prisma, redis).invalidateOrgApiKeys(
+        input.orgId,
+      );
 
       await auditLog({
         session: ctx.session,

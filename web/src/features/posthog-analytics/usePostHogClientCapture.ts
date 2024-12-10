@@ -59,7 +59,13 @@ const events = {
     "version_delete_submit",
   ],
   session_detail: ["publish_button_click"],
-  eval_config: ["delete", "new_form_submit", "new_form_open"],
+  eval_config: [
+    "new_form_submit",
+    "new_form_open",
+    "activate",
+    "deactivate",
+    "update",
+  ],
   eval_templates: [
     "view_version",
     "new_form_open",
@@ -95,6 +101,7 @@ const events = {
     "new_from_trace_form_submit",
     "new_from_trace_form_open",
   ],
+  dataset_run: ["delete_form_open"],
   notification: ["click_link", "dismiss_notification"],
   tag: [
     "add_existing_tag",
@@ -102,7 +109,7 @@ const events = {
     "modal_open",
     "create_new_button_click",
   ],
-  onboarding: ["code_example_tab_switch"],
+  onboarding: ["code_example_tab_switch", "tracing_check_active"],
   user_settings: ["theme_changed"],
   project_settings: [
     "project_delete",
@@ -127,6 +134,7 @@ const events = {
   ],
   help_popup: ["opened", "href_clicked"],
   navigate_detail_pages: ["button_click_prev_or_next"],
+  support_chat: ["initiated", "opened", "message_sent"], // also used on landing page for consistency
 } as const;
 
 // type that represents all possible event names, e.g. "traces:bookmark"

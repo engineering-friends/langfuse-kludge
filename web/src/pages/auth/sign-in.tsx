@@ -13,8 +13,8 @@ import { Input } from "@/src/components/ui/input";
 import { env } from "@/src/env.mjs";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { FcGoogle } from "react-icons/fc";
-import { FaGithub } from "react-icons/fa";
-import { SiOkta, SiAuth0, SiAmazoncognito } from "react-icons/si";
+import { FaGithub, FaGitlab } from "react-icons/fa";
+import { SiOkta, SiAuth0, SiAmazoncognito, SiKeycloak } from "react-icons/si";
 import { TbBrandAzure, TbBrandOauth } from "react-icons/tb";
 import { signIn } from "next-auth/react";
 import Head from "next/head";
@@ -46,10 +46,13 @@ export type PageProps = {
     credentials: boolean;
     google: boolean;
     github: boolean;
+    githubEnterprise: boolean;
+    gitlab: boolean;
     okta: boolean;
     azureAd: boolean;
     auth0: boolean;
     cognito: boolean;
+    keycloak: boolean;
     custom:
       | {
           name: string;
@@ -73,6 +76,13 @@ export const getServerSideProps: GetServerSideProps<PageProps> = async () => {
         github:
           env.AUTH_GITHUB_CLIENT_ID !== undefined &&
           env.AUTH_GITHUB_CLIENT_SECRET !== undefined,
+        githubEnterprise:
+          env.AUTH_GITHUB_ENTERPRISE_CLIENT_ID !== undefined &&
+          env.AUTH_GITHUB_ENTERPRISE_CLIENT_SECRET !== undefined &&
+          env.AUTH_GITHUB_ENTERPRISE_BASE_URL !== undefined,
+        gitlab:
+          env.AUTH_GITLAB_CLIENT_ID !== undefined &&
+          env.AUTH_GITLAB_CLIENT_SECRET !== undefined,
         okta:
           env.AUTH_OKTA_CLIENT_ID !== undefined &&
           env.AUTH_OKTA_CLIENT_SECRET !== undefined &&
@@ -90,6 +100,10 @@ export const getServerSideProps: GetServerSideProps<PageProps> = async () => {
           env.AUTH_COGNITO_CLIENT_ID !== undefined &&
           env.AUTH_COGNITO_CLIENT_SECRET !== undefined &&
           env.AUTH_COGNITO_ISSUER !== undefined,
+        keycloak:
+          env.AUTH_KEYCLOAK_CLIENT_ID !== undefined &&
+          env.AUTH_KEYCLOAK_CLIENT_SECRET !== undefined &&
+          env.AUTH_KEYCLOAK_ISSUER !== undefined,
         custom:
           env.AUTH_CUSTOM_CLIENT_ID !== undefined &&
           env.AUTH_CUSTOM_CLIENT_SECRET !== undefined &&
@@ -161,6 +175,26 @@ export function SSOButtons({
               Github
             </Button>
           )}
+          {authProviders.githubEnterprise && (
+            <Button
+              onClick={() => handleSignIn("github-enterprise")}
+              variant="secondary"
+              loading={providerSigningIn === "github-enterprise"}
+            >
+              <FaGithub className="mr-3" size={18} />
+              Github Enterprise
+            </Button>
+          )}
+          {authProviders.gitlab && (
+            <Button
+              onClick={() => handleSignIn("gitlab")}
+              variant="secondary"
+              loading={providerSigningIn === "gitlab"}
+            >
+              <FaGitlab className="mr-3" size={18} />
+              Gitlab
+            </Button>
+          )}
           {authProviders.azureAd && (
             <Button
               onClick={() => handleSignIn("azure-ad")}
@@ -199,6 +233,18 @@ export function SSOButtons({
             >
               <SiAmazoncognito className="mr-3" size={18} />
               Cognito
+            </Button>
+          )}
+          {authProviders.keycloak && (
+            <Button
+              onClick={() => {
+                capture("sign_in:button_click", { provider: "keycloak" });
+                void signIn("keycloak");
+              }}
+              variant="secondary"
+            >
+              <SiKeycloak className="mr-3" size={18} />
+              Keycloak
             </Button>
           )}
           {authProviders.custom && (
@@ -320,11 +366,14 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
     }
     // current email domain
     const domain = email.data.split("@")[1]?.toLowerCase();
-    const res = await fetch("/api/auth/check-sso", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ domain }),
-    });
+    const res = await fetch(
+      `${env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/auth/check-sso`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain }),
+      },
+    );
 
     if (!res.ok) {
       setCredentialsFormError("SSO is not enabled for this domain.");
@@ -357,7 +406,7 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
           </div>
         )}
 
-        <div className="mt-14 bg-background px-6 py-10 shadow sm:mx-auto sm:w-full sm:max-w-[480px] sm:rounded-lg sm:px-12">
+        <div className="mt-14 bg-background px-6 py-10 shadow sm:mx-auto sm:w-full sm:max-w-[480px] sm:rounded-lg sm:px-10">
           <div className="space-y-6">
             <CloudRegionSwitch />
             {authProviders.credentials ? (
@@ -423,8 +472,10 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
                     className="w-full"
                     loading={credentialsForm.formState.isSubmitting}
                     disabled={
-                      env.NEXT_PUBLIC_TURNSTILE_SITE_KEY !== undefined &&
-                      turnstileToken === undefined
+                      (env.NEXT_PUBLIC_TURNSTILE_SITE_KEY !== undefined &&
+                        turnstileToken === undefined) ||
+                      credentialsForm.watch("email") === "" ||
+                      credentialsForm.watch("password") === ""
                     }
                     onClick={credentialsForm.handleSubmit(onCredentialsSubmit)}
                     data-testid="submit-email-password-sign-in-form"
@@ -438,8 +489,9 @@ export default function SignIn({ authProviders, signUpDisabled }: PageProps) {
                     variant="secondary"
                     loading={ssoLoading}
                     disabled={
-                      env.NEXT_PUBLIC_TURNSTILE_SITE_KEY !== undefined &&
-                      turnstileToken === undefined
+                      (env.NEXT_PUBLIC_TURNSTILE_SITE_KEY !== undefined &&
+                        turnstileToken === undefined) ||
+                      credentialsForm.watch("email") === ""
                     }
                     onClick={handleSsoSignIn}
                   >

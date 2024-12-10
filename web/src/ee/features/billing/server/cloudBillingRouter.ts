@@ -12,6 +12,7 @@ import { TRPCError } from "@trpc/server";
 import * as z from "zod";
 import { throwIfNoOrganizationAccess } from "@/src/features/rbac/utils/checkOrganizationAccess";
 import { auditLog } from "@/src/features/audit-logs/auditLog";
+import { getObservationCountOfProjectsSinceCreationDate } from "@langfuse/shared/src/server";
 
 export const cloudBillingRouter = createTRPCRouter({
   createStripeCheckoutSession: protectedOrganizationProcedure
@@ -40,7 +41,7 @@ export const cloudBillingRouter = createTRPCRouter({
       });
       if (!org) {
         throw new TRPCError({
-          code: "NOT_FOUND",
+          code: "INTERNAL_SERVER_ERROR",
           message: "Organization not found",
         });
       }
@@ -48,7 +49,7 @@ export const cloudBillingRouter = createTRPCRouter({
       const parsedOrg = parseDbOrg(org);
       if (parsedOrg.cloudConfig?.plan)
         throw new TRPCError({
-          code: "FORBIDDEN",
+          code: "INTERNAL_SERVER_ERROR",
           message:
             "Cannot initialize stripe checkout for orgs that have a manual/legacy plan",
         });
@@ -65,7 +66,7 @@ export const cloudBillingRouter = createTRPCRouter({
       if (stripeActiveSubscriptionId) {
         // If the org has a customer ID, do not return checkout options, should use the billing portal instead
         throw new TRPCError({
-          code: "BAD_REQUEST",
+          code: "INTERNAL_SERVER_ERROR",
           message: "Organization already has an active subscription",
         });
       }
@@ -78,7 +79,7 @@ export const cloudBillingRouter = createTRPCRouter({
         )
       )
         throw new TRPCError({
-          code: "BAD_REQUEST",
+          code: "INTERNAL_SERVER_ERROR",
           message: "Invalid stripe product id",
         });
 
@@ -87,7 +88,7 @@ export const cloudBillingRouter = createTRPCRouter({
       );
       if (!product.default_price) {
         throw new TRPCError({
-          code: "BAD_REQUEST",
+          code: "INTERNAL_SERVER_ERROR",
           message: "Product does not have a default price in Stripe",
         });
       }
@@ -104,6 +105,9 @@ export const cloudBillingRouter = createTRPCRouter({
           createStripeClientReference(input.orgId) ?? undefined,
         allow_promotion_codes: true,
         tax_id_collection: {
+          enabled: true,
+        },
+        automatic_tax: {
           enabled: true,
         },
         consent_collection: {
@@ -168,7 +172,7 @@ export const cloudBillingRouter = createTRPCRouter({
       });
       if (!org) {
         throw new TRPCError({
-          code: "NOT_FOUND",
+          code: "INTERNAL_SERVER_ERROR",
           message: "Organization not found",
         });
       }
@@ -214,26 +218,21 @@ export const cloudBillingRouter = createTRPCRouter({
         session: ctx.session,
       });
 
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      thirtyDaysAgo.setHours(0, 0, 0, 0);
-      let billingPeriod: {
-        start: Date;
-        end: Date;
-      } | null = null;
-      let upcomingInvoice: {
-        usdAmount: number;
-        date: Date;
-      } | null = null;
-
       const organization = await ctx.prisma.organization.findUnique({
         where: {
           id: input.orgId,
         },
+        include: {
+          projects: {
+            select: {
+              id: true,
+            },
+          },
+        },
       });
       if (!organization) {
         throw new TRPCError({
-          code: "NOT_FOUND",
+          code: "INTERNAL_SERVER_ERROR",
           message: "Organization not found",
         });
       }
@@ -249,35 +248,90 @@ export const cloudBillingRouter = createTRPCRouter({
           parsedOrg.cloudConfig.stripe.activeSubscriptionId,
         );
         if (subscription) {
-          billingPeriod = {
+          const billingPeriod = {
             start: new Date(subscription.current_period_start * 1000),
             end: new Date(subscription.current_period_end * 1000),
           };
+
           const stripeInvoice = await stripeClient.invoices.retrieveUpcoming({
             subscription: parsedOrg.cloudConfig.stripe.activeSubscriptionId,
           });
-          upcomingInvoice = {
+          const upcomingInvoice = {
             usdAmount: stripeInvoice.amount_due / 100,
             date: new Date(stripeInvoice.period_end * 1000),
+          };
+          const usageInvoiceLines = stripeInvoice.lines.data.filter((line) =>
+            Boolean(line.plan?.meter),
+          );
+          const usage = usageInvoiceLines.reduce((acc, line) => {
+            if (line.quantity) {
+              return acc + line.quantity;
+            }
+            return acc;
+          }, 0);
+          // get meter for usage type (events or observations)
+          const meterId = usageInvoiceLines[0]?.plan?.meter;
+          const meter = meterId
+            ? await stripeClient.billing.meters.retrieve(meterId)
+            : undefined;
+
+          return {
+            usageCount: usage,
+            usageType: meter?.display_name.toLowerCase() ?? "events",
+            billingPeriod,
+            upcomingInvoice,
           };
         }
       }
 
-      const usage = await ctx.prisma.observation.count({
-        where: {
-          project: {
-            orgId: input.orgId,
-          },
-          startTime: {
-            gte: billingPeriod?.start ?? thirtyDaysAgo,
-          },
-        },
-      });
+      // Free plan, usage not tracked on Stripe
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
+      const projectIds = organization.projects.map((p) => p.id);
+
+      const countObservations =
+        await getObservationCountOfProjectsSinceCreationDate({
+          projectIds,
+          start: thirtyDaysAgo,
+        });
+
+      // const usageArr = await Promise.all([
+      //   ctx.prisma.observation.count({
+      //     where: {
+      //       project: {
+      //         orgId: input.orgId,
+      //       },
+      //       createdAt: {
+      //         gte: thirtyDaysAgo,
+      //       },
+      //     },
+      //   }),
+      //   ctx.prisma.trace.count({
+      //     where: {
+      //       project: {
+      //         orgId: input.orgId,
+      //       },
+      //       createdAt: {
+      //         gte: thirtyDaysAgo,
+      //       },
+      //     },
+      //   }),
+      //   ctx.prisma.score.count({
+      //     where: {
+      //       project: {
+      //         orgId: input.orgId,
+      //       },
+      //       createdAt: {
+      //         gte: thirtyDaysAgo,
+      //       },
+      //     },
+      //   }),
+      // ]);
 
       return {
-        countObservations: usage,
-        billingPeriod,
-        upcomingInvoice,
+        usageCount: countObservations,
+        usageType: "observations",
       };
     }),
 });
